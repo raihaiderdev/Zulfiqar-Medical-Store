@@ -1,0 +1,194 @@
+"""
+Dashboard page.
+
+Features implemented:
+  F1 — Every KPI card is clickable and navigates to the correct section.
+  F2 — Expiry alert badge shown on dashboard; alert fires once per session.
+"""
+from __future__ import annotations
+
+from PySide6.QtCore import Qt, Signal
+from PySide6.QtWidgets import (
+    QFrame,
+    QGridLayout,
+    QHBoxLayout,
+    QLabel,
+    QMessageBox,
+    QPushButton,
+    QScrollArea,
+    QTableWidget,
+    QTableWidgetItem,
+    QVBoxLayout,
+    QWidget,
+)
+
+from app.config.settings import settings
+from app.services import dashboard_service
+from app.ui.common.expiry_alert import ExpiryAlertManager
+from app.utils.exceptions import ApplicationError
+
+
+class _KpiCard(QFrame):
+    """A clickable KPI card that emits `clicked` when the user presses it."""
+
+    clicked = Signal()
+
+    def __init__(self, title: str, value: str, *, clickable: bool = True,
+                 accent_colour: str = "#f5f6fa") -> None:
+        super().__init__()
+        self.setFrameShape(QFrame.Shape.StyledPanel)
+        self.setStyleSheet(
+            f"QFrame {{ background: {accent_colour}; border-radius: 8px; padding: 4px; }}"
+            "QFrame:hover { background: #dce8f5; border: 1px solid #2288cc; }"
+            if clickable else
+            f"QFrame {{ background: {accent_colour}; border-radius: 8px; padding: 4px; }}"
+        )
+        if clickable:
+            self.setCursor(Qt.CursorShape.PointingHandCursor)
+
+        layout = QVBoxLayout(self)
+        self.value_label = QLabel(value)
+        self.value_label.setStyleSheet("font-size: 20px; font-weight: 700;")
+        self.title_label = QLabel(title)
+        self.title_label.setStyleSheet("color: #666; font-size: 11px;")
+        layout.addWidget(self.value_label)
+        layout.addWidget(self.title_label)
+
+    def mousePressEvent(self, event) -> None:  # noqa: ANN001
+        self.clicked.emit()
+        super().mousePressEvent(event)
+
+    def update_value(self, value: str) -> None:
+        self.value_label.setText(value)
+
+
+class DashboardPage(QWidget):
+    # Signal emitted when user clicks a card — the main window listens to
+    # navigate to the right page.
+    navigate_to = Signal(str)   # page label e.g. "Medicines", "Inventory"
+
+    def __init__(self, parent=None) -> None:
+        super().__init__(parent)
+        root = QVBoxLayout(self)
+
+        # ── Header ─────────────────────────────────────────────────────────
+        header_row = QHBoxLayout()
+        header = QLabel("Dashboard")
+        header.setStyleSheet("font-size: 18px; font-weight: 600;")
+        header_row.addWidget(header)
+        header_row.addStretch()
+
+        # F2: Expiry alert button / badge
+        self._expiry_badge = QPushButton("⚠ Loading expiry data…")
+        self._expiry_badge.setStyleSheet(
+            "background: #e67e22; color: white; font-weight: 700; "
+            "padding: 4px 12px; border-radius: 4px; font-size: 12px;"
+        )
+        self._expiry_badge.clicked.connect(self._show_expiry_alert)
+        self._expiry_badge.setVisible(False)
+        header_row.addWidget(self._expiry_badge)
+
+        refresh_btn = QPushButton("Refresh")
+        refresh_btn.clicked.connect(self.refresh)
+        header_row.addWidget(refresh_btn)
+        root.addLayout(header_row)
+
+        # ── Scroll area ─────────────────────────────────────────────────────
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        content = QWidget()
+        self.content_layout = QVBoxLayout(content)
+        scroll.setWidget(content)
+        root.addWidget(scroll)
+
+        self.kpi_grid_container = QWidget()
+        self.kpi_grid = QGridLayout(self.kpi_grid_container)
+        self.kpi_grid.setSpacing(12)
+        self.content_layout.addWidget(self.kpi_grid_container)
+
+        self.content_layout.addWidget(QLabel("Sales by period"))
+        self.sales_table = QTableWidget(0, 3)
+        self.sales_table.setHorizontalHeaderLabels(["Period", "Sales", "Gross Profit"])
+        self.sales_table.horizontalHeader().setStretchLastSection(True)
+        self.sales_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self.content_layout.addWidget(self.sales_table)
+
+        self._cards: dict[str, _KpiCard] = {}
+
+        self.refresh()
+
+        # F2: Fire the session-once expiry alert after the dashboard loads.
+        # Use a short delay so the window is fully visible first.
+        from PySide6.QtCore import QTimer
+        QTimer.singleShot(800, lambda: ExpiryAlertManager.maybe_show_alert(self))
+
+    def refresh(self) -> None:
+        try:
+            kpis = dashboard_service.admin_dashboard_kpis()
+        except ApplicationError as exc:
+            QMessageBox.warning(self, "Cannot load dashboard", str(exc))
+            return
+
+        # ── KPI cards ──────────────────────────────────────────────────────
+        # (title, value, navigate_to_label, accent_colour)
+        cur = settings.currency
+        card_specs = [
+            ("Total Medicines", str(kpis["total_medicines"]), "Medicines", "#eaf4fb"),
+            ("Total Stock Units", str(kpis["total_stock_quantity"]), "Inventory", "#eaf4fb"),
+            ("Low Stock Items", str(kpis["low_stock_count"]), "Inventory", "#fff8e1"),
+            ("Expired Batches", str(kpis["expired_count"]), "Inventory", "#fdecea"),
+            ("Expiring Soon", str(kpis["expiring_soon_count"]), "Inventory", "#fff3e0"),
+            ("Active Users", str(kpis["active_user_count"]), "Users", "#eaf4fb"),
+            ("Total Purchases",
+             f"{cur} {kpis['total_purchases_value']:.2f}", "Purchases", "#eaf4fb"),
+            ("Stock Value (Cost)",
+             f"{cur} {kpis['stock_valuation']['cost_value']:.2f}", "Inventory", "#eaf4fb"),
+            ("Stock Value (Retail)",
+             f"{cur} {kpis['stock_valuation']['retail_value']:.2f}", "Inventory", "#eaf4fb"),
+        ]
+
+        # Rebuild grid
+        while self.kpi_grid.count():
+            item = self.kpi_grid.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+        self._cards.clear()
+
+        for idx, (title, value, nav_target, colour) in enumerate(card_specs):
+            card = _KpiCard(title, value, clickable=True, accent_colour=colour)
+            card.clicked.connect(lambda t=nav_target: self.navigate_to.emit(t))
+            self.kpi_grid.addWidget(card, idx // 3, idx % 3)
+            self._cards[title] = card
+
+        # ── Sales table ────────────────────────────────────────────────────
+        self.sales_table.setRowCount(0)
+        for period_label, values in kpis["sales"].items():
+            row = self.sales_table.rowCount()
+            self.sales_table.insertRow(row)
+            self.sales_table.setItem(row, 0, QTableWidgetItem(
+                period_label.replace("_", " ").title()
+            ))
+            self.sales_table.setItem(row, 1, QTableWidgetItem(
+                f"{cur} {values['sales']:.2f}"
+            ))
+            self.sales_table.setItem(row, 2, QTableWidgetItem(
+                f"{cur} {values['profit']:.2f}"
+            ))
+
+        # ── Expiry badge (F2) ──────────────────────────────────────────────
+        counts = ExpiryAlertManager.alert_count()
+        if counts["total"] > 0:
+            parts = []
+            if counts["expired"]:
+                parts.append(f"{counts['expired']} expired")
+            if counts["very_soon"]:
+                parts.append(f"{counts['very_soon']} expiring very soon")
+            if counts["soon"]:
+                parts.append(f"{counts['soon']} expiring soon")
+            self._expiry_badge.setText(f"⚠  {' | '.join(parts)}  — Click to view")
+            self._expiry_badge.setVisible(True)
+        else:
+            self._expiry_badge.setVisible(False)
+
+    def _show_expiry_alert(self) -> None:
+        ExpiryAlertManager.show_alert_forced(self)
