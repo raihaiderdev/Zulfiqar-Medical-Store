@@ -120,6 +120,122 @@ def edit_medicine(medicine_id: int, **fields) -> None:
         )
 
 
+@require_permission("medicine.view")
+def find_batch(medicine_id: int, batch_number: str) -> dict | None:
+    """
+    Return basic info for a batch if it exists, or None if it doesn't.
+    Used by AddBatchDialog to detect restock vs new batch.
+    """
+    with session_scope() as session:
+        from sqlalchemy.orm import selectinload as _sel
+        from app.models.location import Shelf, Rack, Wardrobe
+
+        batch = (
+            session.query(MedicineBatch)
+            .options(
+                _sel(MedicineBatch.shelf)
+                    .selectinload(Shelf.rack)
+                    .selectinload(Rack.wardrobe),
+            )
+            .filter(
+                MedicineBatch.medicine_id == medicine_id,
+                MedicineBatch.batch_number == batch_number,
+            )
+            .one_or_none()
+        )
+        if batch is None:
+            return None
+
+        wardrobe = rack = shelf = ""
+        if batch.shelf:
+            try:
+                shelf    = batch.shelf.code
+                rack     = batch.shelf.rack.code if batch.shelf.rack else ""
+                wardrobe = batch.shelf.rack.wardrobe.code if (
+                    batch.shelf.rack and batch.shelf.rack.wardrobe) else ""
+            except Exception:
+                pass
+
+        return {
+            "batch_id":       batch.id,
+            "batch_number":   batch.batch_number,
+            "quantity":       batch.quantity,
+            "purchase_price": float(batch.purchase_price),
+            "selling_price":  float(batch.selling_price),
+            "expiry_date":    batch.expiry_date.isoformat(),
+            "wardrobe":       wardrobe,
+            "rack":           rack,
+            "shelf":          shelf,
+        }
+
+
+@require_permission("medicine.add")
+def add_stock_to_existing_batch(
+    *,
+    medicine_id: int,
+    batch_number: str,
+    quantity: int,
+    purchase_price: Optional[float] = None,
+    selling_price: Optional[float] = None,
+) -> int:
+    """
+    Add more quantity to a batch that already exists (same batch number,
+    same medicine).  Used when a new delivery arrives under the same batch
+    number as a previous one.
+
+    Optionally updates the purchase/selling price on the batch if new
+    prices are provided — useful when the supplier charges a different
+    price on a restock.
+
+    Returns the batch id.
+    """
+    if quantity <= 0:
+        raise ValidationError("Quantity to add must be positive.")
+
+    with session_scope() as session:
+        batch_repo = MedicineBatchRepository(session)
+        batch = batch_repo.get_by_medicine_and_number(medicine_id, batch_number)
+        if batch is None:
+            raise NotFoundError(
+                f"Batch '{batch_number}' not found for medicine {medicine_id}. "
+                "Use Add Batch to create a new batch."
+            )
+
+        old_qty = batch.quantity
+
+        if purchase_price is not None and purchase_price >= 0:
+            batch.purchase_price = purchase_price
+        if selling_price is not None and selling_price >= 0:
+            batch.selling_price = selling_price
+        session.add(batch)
+
+        stock_service.apply_stock_change(
+            session,
+            batch=batch,
+            delta=quantity,
+            txn_type=StockTxnType.ADJUSTMENT_IN,
+            user_id=current_session.user_id,
+            reason=f"Stock restock on existing batch '{batch_number}'",
+        )
+
+        audit_service.record(
+            session,
+            user_id=current_session.user_id,
+            action="BATCH_RESTOCKED",
+            entity="medicine_batches",
+            entity_id=batch.id,
+            old_value={"quantity": old_qty},
+            new_value={
+                "quantity": old_qty + quantity,
+                "added": quantity,
+                "batch_number": batch_number,
+                "purchase_price": float(batch.purchase_price),
+                "selling_price": float(batch.selling_price),
+            },
+        )
+        return batch.id
+
+
 @require_permission("medicine.add")
 def add_manual_batch(
     *,
@@ -351,4 +467,112 @@ def get_medicine_detail(medicine_id: int) -> dict:
             "total_stock": total_stock,
             "overall_status": overall_status,
             "batches": batches_data,
+        }
+
+
+@require_permission("medicine.edit")
+def edit_batch(
+    *,
+    batch_id: int,
+    purchase_price: Optional[float] = None,
+    selling_price: Optional[float] = None,
+    expiry_date: Optional[date] = None,
+    wardrobe_code: Optional[str] = None,
+    rack_code: Optional[str] = None,
+    shelf_code: Optional[str] = None,
+) -> None:
+    """
+    Update prices, expiry date or shelf location on an existing batch.
+    Only the fields that are explicitly provided are changed — pass None
+    to leave a field unchanged.
+    """
+    with session_scope() as session:
+        batch = session.get(MedicineBatch, batch_id)
+        if batch is None:
+            raise NotFoundError(f"Batch {batch_id} not found.")
+
+        old_values: dict = {}
+        new_values: dict = {}
+
+        if purchase_price is not None:
+            if purchase_price < 0:
+                raise ValidationError("Purchase price cannot be negative.")
+            old_values["purchase_price"] = float(batch.purchase_price)
+            batch.purchase_price = purchase_price
+            new_values["purchase_price"] = purchase_price
+
+        if selling_price is not None:
+            if selling_price < 0:
+                raise ValidationError("Selling price cannot be negative.")
+            old_values["selling_price"] = float(batch.selling_price)
+            batch.selling_price = selling_price
+            new_values["selling_price"] = selling_price
+
+        if expiry_date is not None:
+            old_values["expiry_date"] = str(batch.expiry_date)
+            batch.expiry_date = expiry_date
+            new_values["expiry_date"] = str(expiry_date)
+
+        # Update shelf location if all three codes are provided
+        if wardrobe_code and rack_code and shelf_code:
+            shelf = LocationRepository(session).get_or_create_full_location(
+                wardrobe_code, rack_code, shelf_code
+            )
+            old_values["shelf_id"] = batch.shelf_id
+            batch.shelf_id = shelf.id
+            new_values["shelf"] = f"{wardrobe_code}/{rack_code}/{shelf_code}"
+
+        if not new_values:
+            return  # Nothing to update
+
+        session.add(batch)
+        audit_service.record(
+            session,
+            user_id=current_session.user_id,
+            action="BATCH_EDITED",
+            entity="medicine_batches",
+            entity_id=batch_id,
+            old_value=old_values,
+            new_value=new_values,
+        )
+
+
+@require_permission("medicine.view")
+def get_medicine_detail_by_batch(batch_id: int) -> dict:
+    """Return price/location info for a single batch — used by EditBatchDialog."""
+    with session_scope() as session:
+        from sqlalchemy.orm import selectinload as _sel
+        from app.models.location import Shelf, Rack, Wardrobe
+
+        batch = (
+            session.query(MedicineBatch)
+            .options(
+                _sel(MedicineBatch.shelf)
+                    .selectinload(Shelf.rack)
+                    .selectinload(Rack.wardrobe),
+            )
+            .filter(MedicineBatch.id == batch_id)
+            .one_or_none()
+        )
+        if batch is None:
+            raise NotFoundError(f"Batch {batch_id} not found.")
+
+        wardrobe = rack = shelf = ""
+        if batch.shelf:
+            try:
+                shelf    = batch.shelf.code
+                rack     = batch.shelf.rack.code if batch.shelf.rack else ""
+                wardrobe = batch.shelf.rack.wardrobe.code if (batch.shelf.rack and batch.shelf.rack.wardrobe) else ""
+            except Exception:
+                pass
+
+        return {
+            "batch_id":       batch.id,
+            "batch_number":   batch.batch_number,
+            "purchase_price": float(batch.purchase_price),
+            "selling_price":  float(batch.selling_price),
+            "expiry_date":    batch.expiry_date.isoformat(),
+            "wardrobe":       wardrobe,
+            "rack":           rack,
+            "shelf":          shelf,
         }

@@ -1,12 +1,5 @@
 """
-Medicines page — full CRUD with live stock status.
-
-Layout:
-  • Full-width table at all times — all columns always visible.
-  • Clicking a row opens a detail DIALOG (not an inline panel) so the
-    table is never squeezed.
-  • Columns use Interactive resize so the user can drag them wider.
-  • Minimum column widths prevent truncation.
+Medicines page — full CRUD with live stock status and clean Update Stock dialog.
 """
 from __future__ import annotations
 
@@ -26,7 +19,6 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QMessageBox,
     QPushButton,
-    QScrollArea,
     QSpinBox,
     QTableWidget,
     QTableWidgetItem,
@@ -48,15 +40,6 @@ _STATUS_FG = {
     "EXPIRING SOON":      Qt.GlobalColor.darkYellow,
     "EXPIRING VERY SOON": Qt.GlobalColor.red,
     "EXPIRED":            Qt.GlobalColor.red,
-}
-
-_STATUS_BG = {
-    "IN STOCK":           "#eafaf1",
-    "LOW STOCK":          "#fef9e7",
-    "OUT OF STOCK":       "#fdedec",
-    "EXPIRING SOON":      "#fef9e7",
-    "EXPIRING VERY SOON": "#fdedec",
-    "EXPIRED":            "#fdedec",
 }
 
 
@@ -85,35 +68,182 @@ def _medicine_status(med) -> tuple[int, str]:
     return total_qty, "IN STOCK"
 
 
+# ── Edit Batch Prices dialog ──────────────────────────────────────────────
+
+class EditBatchDialog(QDialog):
+    """Edit purchase price, selling price, expiry date of an existing batch."""
+
+    def __init__(self, batch_id: int, batch_number: str,
+                 medicine_name: str, parent=None) -> None:
+        super().__init__(parent)
+        self._batch_id = batch_id
+        self.setWindowTitle(f"Edit Batch — {medicine_name}  [{batch_number}]")
+        self.setMinimumWidth(420)
+        layout = QFormLayout(self)
+
+        try:
+            detail = medicine_service.get_medicine_detail_by_batch(batch_id)
+        except Exception:
+            detail = None
+
+        curr_buy  = f"{detail.get('purchase_price', 0.0):.2f}" if detail else ""
+        curr_sell = f"{detail.get('selling_price',  0.0):.2f}" if detail else ""
+        curr_exp  = detail.get("expiry_date", "")              if detail else ""
+        curr_ward = detail.get("wardrobe", "")                 if detail else ""
+        curr_rack = detail.get("rack", "")                     if detail else ""
+        curr_shelf= detail.get("shelf", "")                    if detail else ""
+
+        info = QLabel(
+            f"<b>{medicine_name}</b>  —  Batch: <b>{batch_number}</b>"
+        )
+        info.setTextFormat(Qt.TextFormat.RichText)
+        layout.addRow(info)
+
+        self.purchase_price_edit = QLineEdit(curr_buy)
+        layout.addRow("Purchase Price (Rs):", self.purchase_price_edit)
+
+        self.selling_price_edit = QLineEdit(curr_sell)
+        layout.addRow("Selling Price (Rs):", self.selling_price_edit)
+
+        self.expiry_edit = QDateEdit(calendarPopup=True)
+        if curr_exp:
+            try:
+                from datetime import datetime as _dt
+                self.expiry_edit.setDate(_dt.strptime(curr_exp, "%Y-%m-%d").date())
+            except Exception:
+                self.expiry_edit.setDate(date.today() + timedelta(days=365))
+        else:
+            self.expiry_edit.setDate(date.today() + timedelta(days=365))
+        layout.addRow("Expiry Date:", self.expiry_edit)
+
+        layout.addRow(QLabel("Location (leave blank to keep current):"))
+        self.wardrobe_edit = QLineEdit(curr_ward)
+        self.rack_edit     = QLineEdit(curr_rack)
+        self.shelf_edit    = QLineEdit(curr_shelf)
+        layout.addRow("Wardrobe:", self.wardrobe_edit)
+        layout.addRow("Rack:",     self.rack_edit)
+        layout.addRow("Shelf:",    self.shelf_edit)
+
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel
+        )
+        buttons.accepted.connect(self._save)
+        buttons.rejected.connect(self.reject)
+        layout.addRow(buttons)
+
+    def _save(self) -> None:
+        buy_text  = self.purchase_price_edit.text().strip()
+        sell_text = self.selling_price_edit.text().strip()
+        new_buy = new_sell = None
+        if buy_text:
+            try:
+                new_buy = float(buy_text)
+            except ValueError:
+                QMessageBox.warning(self, "Invalid price", f"'{buy_text}' is not valid.")
+                return
+        if sell_text:
+            try:
+                new_sell = float(sell_text)
+            except ValueError:
+                QMessageBox.warning(self, "Invalid price", f"'{sell_text}' is not valid.")
+                return
+
+        qt_date    = self.expiry_edit.date()
+        new_expiry = date(qt_date.year(), qt_date.month(), qt_date.day())
+        w = self.wardrobe_edit.text().strip()
+        r = self.rack_edit.text().strip()
+        s = self.shelf_edit.text().strip()
+
+        try:
+            medicine_service.edit_batch(
+                batch_id=self._batch_id,
+                purchase_price=new_buy,
+                selling_price=new_sell,
+                expiry_date=new_expiry,
+                wardrobe_code=w or None,
+                rack_code=r or None,
+                shelf_code=s or None,
+            )
+        except ApplicationError as exc:
+            QMessageBox.critical(self, "Could not update batch", str(exc))
+            return
+
+        QMessageBox.information(self, "Batch Updated ✔",
+                                "Prices, expiry and location saved.")
+        self.accept()
+
+
 # ── Medicine Detail Dialog ────────────────────────────────────────────────
 
 class MedicineDetailDialog(QDialog):
-    """Full detail view for a medicine — opened when a row is clicked."""
+    """Full detail view — shows batch table with Edit Prices button per row."""
 
     def __init__(self, medicine_id: int, parent=None) -> None:
         super().__init__(parent)
         self.setWindowTitle("Medicine Detail")
-        self.setMinimumSize(780, 480)
+        self.setMinimumSize(860, 520)
+        self._medicine_id   = medicine_id
+        self._medicine_name = ""
         layout = QVBoxLayout(self)
 
-        try:
-            from app.ui.common.medicine_search_widget import MedicineSearchWidget
-            widget = MedicineSearchWidget(self, show_detail=True)
-            # Hide the search bar — we drive it directly
-            widget.search_edit.setVisible(False)
-            widget.results_list.setVisible(False)
-            widget._load_detail(medicine_id)
-            layout.addWidget(widget, 1)
-        except Exception as exc:
-            layout.addWidget(QLabel(f"Could not load detail: {exc}"))
+        from app.ui.common.medicine_search_widget import MedicineSearchWidget
+        self._widget = MedicineSearchWidget(self, show_detail=True)
+        self._widget.search_edit.setVisible(False)
+        self._widget.results_list.setVisible(False)
+        self._widget._load_detail(medicine_id)
+        layout.addWidget(self._widget, 1)
 
+        try:
+            detail = medicine_service.get_medicine_detail(medicine_id)
+            self._medicine_name = detail.get("name", "")
+            self._inject_edit_buttons(detail)
+        except Exception:
+            pass
+
+        btn_row = QHBoxLayout()
+        btn_row.addStretch()
         close_btn = QPushButton("Close")
         close_btn.setStyleSheet("padding: 6px 18px;")
         close_btn.clicked.connect(self.accept)
-        row = QHBoxLayout()
-        row.addStretch()
-        row.addWidget(close_btn)
-        layout.addLayout(row)
+        btn_row.addWidget(close_btn)
+        layout.addLayout(btn_row)
+
+    def _inject_edit_buttons(self, detail: dict) -> None:
+        table   = self._widget._batch_table
+        batches = detail.get("batches", [])
+        if not batches:
+            return
+        col = table.columnCount()
+        table.setColumnCount(col + 1)
+        table.setHorizontalHeaderItem(col, QTableWidgetItem("Edit Prices"))
+        for row_idx, b in enumerate(batches):
+            btn = QPushButton("✏ Edit Prices")
+            btn.setFixedHeight(24)
+            btn.setStyleSheet(
+                "font-size: 11px; padding: 1px 8px; "
+                "background-color: #d35400; color: white; border-radius: 3px;"
+            )
+            btn.clicked.connect(
+                lambda _, bid=b["batch_id"], bnum=b["batch_number"]:
+                    self._open_edit_batch(bid, bnum)
+            )
+            cell = QWidget()
+            cl = QHBoxLayout(cell)
+            cl.setContentsMargins(2, 1, 2, 1)
+            cl.addWidget(btn)
+            table.setCellWidget(row_idx, col, cell)
+        table.resizeColumnsToContents()
+
+    def _open_edit_batch(self, batch_id: int, batch_number: str) -> None:
+        dlg = EditBatchDialog(batch_id, batch_number, self._medicine_name, self)
+        if dlg.exec() == QDialog.DialogCode.Accepted:
+            try:
+                self._widget._load_detail(self._medicine_id)
+                self._inject_edit_buttons(
+                    medicine_service.get_medicine_detail(self._medicine_id)
+                )
+            except Exception:
+                pass
 
 
 # ── Add Medicine dialog ───────────────────────────────────────────────────
@@ -125,30 +255,30 @@ class AddMedicineDialog(QDialog):
         self.setMinimumWidth(500)
         layout = QFormLayout(self)
 
-        self.name_edit         = QLineEdit()
-        self.formula_edit      = QLineEdit()
-        self.brand_edit        = QLineEdit()
-        self.category_edit     = QLineEdit()
-        self.manufacturer_edit = QLineEdit()
-        self.dosage_combo      = QComboBox()
+        self.name_edit           = QLineEdit()
+        self.formula_edit        = QLineEdit()
+        self.brand_edit          = QLineEdit()
+        self.category_edit       = QLineEdit()
+        self.manufacturer_edit   = QLineEdit()
+        self.dosage_combo        = QComboBox()
         self.dosage_combo.addItems([f.value for f in DosageForm])
-        self.strength_edit     = QLineEdit()
-        self.pack_size_edit    = QLineEdit()
-        self.base_unit_edit    = QLineEdit()
+        self.strength_edit       = QLineEdit()
+        self.pack_size_edit      = QLineEdit()
+        self.base_unit_edit      = QLineEdit()
         self.base_unit_edit.setPlaceholderText("e.g. Tablet, Capsule, mL")
-        self.pack_unit_edit    = QLineEdit()
+        self.pack_unit_edit      = QLineEdit()
         self.pack_unit_edit.setPlaceholderText("e.g. Strip, Box  (leave blank if N/A)")
         self.units_per_pack_spin = QSpinBox()
         self.units_per_pack_spin.setRange(1, 10_000)
         self.units_per_pack_spin.setValue(1)
-        self.barcode_edit      = QLineEdit()
-        self.min_stock_spin    = QSpinBox()
+        self.barcode_edit        = QLineEdit()
+        self.min_stock_spin      = QSpinBox()
         self.min_stock_spin.setRange(0, 1_000_000)
         self.min_stock_spin.setValue(10)
-        self.reorder_spin      = QSpinBox()
+        self.reorder_spin        = QSpinBox()
         self.reorder_spin.setRange(0, 1_000_000)
         self.reorder_spin.setValue(20)
-        self.notes_edit        = QLineEdit()
+        self.notes_edit          = QLineEdit()
 
         layout.addRow("Name *",          self.name_edit)
         layout.addRow("Generic Formula", self.formula_edit)
@@ -221,27 +351,27 @@ class EditMedicineDialog(QDialog):
             val = detail.get(key, default) if detail else default
             return str(val) if val is not None else ""
 
-        self.name_edit        = QLineEdit(v("name"))
-        self.formula_edit     = QLineEdit(v("generic_formula"))
-        self.brand_edit       = QLineEdit(v("brand_name"))
-        self.dosage_combo     = QComboBox()
+        self.name_edit           = QLineEdit(v("name"))
+        self.formula_edit        = QLineEdit(v("generic_formula"))
+        self.brand_edit          = QLineEdit(v("brand_name"))
+        self.dosage_combo        = QComboBox()
         self.dosage_combo.addItems([f.value for f in DosageForm])
         if detail:
             idx = self.dosage_combo.findText(v("dosage_form"))
             if idx >= 0:
                 self.dosage_combo.setCurrentIndex(idx)
-        self.strength_edit    = QLineEdit(v("strength"))
-        self.pack_size_edit   = QLineEdit(v("pack_size"))
-        self.base_unit_edit   = QLineEdit(v("base_unit"))
-        self.pack_unit_edit   = QLineEdit(v("pack_unit"))
+        self.strength_edit       = QLineEdit(v("strength"))
+        self.pack_size_edit      = QLineEdit(v("pack_size"))
+        self.base_unit_edit      = QLineEdit(v("base_unit"))
+        self.pack_unit_edit      = QLineEdit(v("pack_unit"))
         self.units_per_pack_spin = QSpinBox()
         self.units_per_pack_spin.setRange(1, 10_000)
         self.units_per_pack_spin.setValue(int(detail.get("units_per_pack") or 1) if detail else 1)
-        self.barcode_edit     = QLineEdit(v("barcode"))
-        self.min_stock_spin   = QSpinBox()
+        self.barcode_edit        = QLineEdit(v("barcode"))
+        self.min_stock_spin      = QSpinBox()
         self.min_stock_spin.setRange(0, 1_000_000)
         self.min_stock_spin.setValue(int(detail.get("min_stock_level") or 10) if detail else 10)
-        self.notes_edit       = QLineEdit()
+        self.notes_edit          = QLineEdit()
 
         layout.addRow("Name *",          self.name_edit)
         layout.addRow("Generic Formula", self.formula_edit)
@@ -290,81 +420,307 @@ class EditMedicineDialog(QDialog):
         self.accept()
 
 
-# ── Add Batch dialog ──────────────────────────────────────────────────────
+# ── Update Stock dialog ───────────────────────────────────────────────────
 
 class AddBatchDialog(QDialog):
+    """
+    Update Stock dialog.
+
+    Shows:
+      1. Medicine name + total stock (header)
+      2. Table of existing batches — CLICK A ROW to select it
+      3. Fields pre-filled: Qty to Add, Buy Price, Sell Price, Expiry Date
+      4. One green "Update Stock" button
+
+    Clean, no tabs, no dropdown, no clutter.
+    """
+
     def __init__(self, medicine_id: int, medicine_name: str, parent=None) -> None:
         super().__init__(parent)
-        self.medicine_id = medicine_id
-        self.setWindowTitle(f"Add Batch — {medicine_name}")
-        layout = QFormLayout(self)
+        self.medicine_id   = medicine_id
+        self.medicine_name = medicine_name
+        self._batches: list[dict] = []
+        self._selected_row = -1
 
-        self.batch_number_edit   = QLineEdit()
-        self.purchase_price_edit = QLineEdit()
-        self.selling_price_edit  = QLineEdit()
-        self.quantity_spin       = QSpinBox()
-        self.quantity_spin.setRange(0, 1_000_000)
-        self.expiry_edit = QDateEdit(calendarPopup=True)
-        self.expiry_edit.setDate(date.today() + timedelta(days=365))
-        self.wardrobe_edit = QLineEdit()
-        self.rack_edit     = QLineEdit()
-        self.shelf_edit    = QLineEdit()
+        self.setWindowTitle(f"Update Stock — {medicine_name}")
+        self.setMinimumWidth(700)
+        self.setMinimumHeight(600)
+        self.resize(740, 650)
 
-        layout.addRow("Batch Number *",   self.batch_number_edit)
-        layout.addRow("Purchase Price *", self.purchase_price_edit)
-        layout.addRow("Selling Price *",  self.selling_price_edit)
-        layout.addRow("Quantity *",       self.quantity_spin)
-        layout.addRow("Expiry Date *",    self.expiry_edit)
-        layout.addRow("Wardrobe",         self.wardrobe_edit)
-        layout.addRow("Rack",             self.rack_edit)
-        layout.addRow("Shelf",            self.shelf_edit)
+        root = QVBoxLayout(self)
+        root.setSpacing(14)
+        root.setContentsMargins(18, 16, 18, 16)
 
-        buttons = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel
+        # ── 1. Medicine header ─────────────────────────────────────────────
+        self._header_label = QLabel()
+        self._header_label.setStyleSheet(
+            "font-size: 15px; font-weight: 700; color: #154c89; "
+            "padding: 8px 12px; background: #eaf4fb; "
+            "border-radius: 6px; border: 1px solid #aed6f1;"
         )
-        buttons.accepted.connect(self._save)
-        buttons.rejected.connect(self.reject)
-        layout.addRow(buttons)
+        self._header_label.setTextFormat(Qt.TextFormat.RichText)
+        root.addWidget(self._header_label)
+
+        # ── 2. Existing batches table ──────────────────────────────────────
+        lbl1 = QLabel("Click a row below to select the batch you want to update:")
+        lbl1.setStyleSheet("font-weight: 600; font-size: 13px; color: #333;")
+        root.addWidget(lbl1)
+
+        self._batch_table = QTableWidget(0, 5)
+        self._batch_table.setHorizontalHeaderLabels([
+            "Batch Number", "Current Stock", "Buy Price (Rs)",
+            "Sell Price (Rs)", "Expiry Date"
+        ])
+        hh = self._batch_table.horizontalHeader()
+        hh.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        for c in range(1, 5):
+            hh.setSectionResizeMode(c, QHeaderView.ResizeMode.ResizeToContents)
+        self._batch_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self._batch_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self._batch_table.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
+        self._batch_table.setAlternatingRowColors(True)
+        self._batch_table.setMinimumHeight(150)
+        self._batch_table.setMaximumHeight(200)
+        self._batch_table.itemSelectionChanged.connect(self._on_row_selected)
+        root.addWidget(self._batch_table)
+
+        # ── 3. Divider ─────────────────────────────────────────────────────
+        div = QWidget()
+        div.setFixedHeight(1)
+        div.setStyleSheet("background: #ccc;")
+        root.addWidget(div)
+
+        # ── 4. Edit fields ─────────────────────────────────────────────────
+        lbl2 = QLabel("Fields below are pre-filled from the selected batch — edit as needed:")
+        lbl2.setStyleSheet("font-weight: 600; font-size: 13px; color: #333;")
+        root.addWidget(lbl2)
+
+        form = QFormLayout()
+        form.setHorizontalSpacing(20)
+        form.setVerticalSpacing(12)
+
+        self._qty_spin = QSpinBox()
+        self._qty_spin.setRange(1, 1_000_000)
+        self._qty_spin.setValue(1)
+        self._qty_spin.setMinimumHeight(34)
+        self._qty_spin.setStyleSheet("font-size: 13px;")
+        form.addRow("Quantity to Add *:", self._qty_spin)
+
+        self._buy_edit = QLineEdit()
+        self._buy_edit.setMinimumHeight(34)
+        self._buy_edit.setStyleSheet("font-size: 13px;")
+        form.addRow("Purchase Price (Rs):", self._buy_edit)
+
+        self._sell_edit = QLineEdit()
+        self._sell_edit.setMinimumHeight(34)
+        self._sell_edit.setStyleSheet("font-size: 13px;")
+        form.addRow("Selling Price (Rs):", self._sell_edit)
+
+        self._expiry_edit = QDateEdit(calendarPopup=True)
+        self._expiry_edit.setMinimumHeight(34)
+        self._expiry_edit.setStyleSheet("font-size: 13px;")
+        self._expiry_edit.setDate(date.today() + timedelta(days=365))
+        form.addRow("Expiry Date:", self._expiry_edit)
+
+        root.addLayout(form)
+
+        # ── 5. Selection status ────────────────────────────────────────────
+        self._status_lbl = QLabel(
+            "ℹ  No batch selected — click a row in the table above."
+        )
+        self._status_lbl.setStyleSheet("color: #888; font-size: 12px;")
+        root.addWidget(self._status_lbl)
+
+        root.addStretch()
+
+        # ── 6. Buttons ─────────────────────────────────────────────────────
+        btn_row = QHBoxLayout()
+
+        cancel_btn = QPushButton("Cancel")
+        cancel_btn.setMinimumHeight(42)
+        cancel_btn.setStyleSheet("font-size: 13px; padding: 6px 20px; border-radius: 5px;")
+        cancel_btn.clicked.connect(self.reject)
+
+        self._update_btn = QPushButton("➕  Update Stock")
+        self._update_btn.setMinimumHeight(42)
+        self._update_btn.setStyleSheet(
+            "background-color: #27ae60; color: white; font-weight: 700; "
+            "font-size: 14px; padding: 6px 28px; border-radius: 5px;"
+        )
+        self._update_btn.setEnabled(False)
+        self._update_btn.clicked.connect(self._save)
+
+        btn_row.addStretch()
+        btn_row.addWidget(cancel_btn)
+        btn_row.addWidget(self._update_btn)
+        root.addLayout(btn_row)
+
+        self._load_medicine()
+
+    # ── Load ──────────────────────────────────────────────────────────────
+
+    def _load_medicine(self) -> None:
+        try:
+            detail = medicine_service.get_medicine_detail(self.medicine_id)
+        except Exception:
+            self._header_label.setText(f"<b>{self.medicine_name}</b>")
+            return
+
+        total  = detail.get("total_stock", 0)
+        unit   = detail.get("base_unit") or "units"
+        status = detail.get("overall_status", "")
+        col    = {"IN STOCK": "#1e8449", "LOW STOCK": "#d35400",
+                  "OUT OF STOCK": "#922b21"}.get(status, "#333")
+
+        self._header_label.setText(
+            f"<b>{detail['name']}</b>"
+            + (f" — {detail['dosage_form']}" if detail.get("dosage_form") else "")
+            + (f" ({detail['strength']})" if detail.get("strength") else "")
+            + f"&nbsp;&nbsp;&nbsp;"
+            f"<span style='color:{col}; font-size:15px; font-weight:700;'>"
+            f"Total Stock: {total} {unit}</span>"
+            + f"&nbsp;&nbsp;"
+            f"<span style='background:{col}; color:white; padding:2px 10px; "
+            f"border-radius:4px; font-size:12px;'>{status}</span>"
+        )
+
+        self._batches = detail.get("batches", [])
+        self._batch_table.setRowCount(0)
+
+        for b in self._batches:
+            row = self._batch_table.rowCount()
+            self._batch_table.insertRow(row)
+
+            self._batch_table.setItem(row, 0, QTableWidgetItem(b["batch_number"]))
+
+            qty_item = QTableWidgetItem(str(b["quantity"]))
+            qty_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignVCenter)
+            if b["quantity"] <= 0:
+                qty_item.setForeground(Qt.GlobalColor.red)
+            self._batch_table.setItem(row, 1, qty_item)
+
+            for col_idx, key in enumerate(["purchase_price", "selling_price"], start=2):
+                it = QTableWidgetItem(f"{b[key]:.2f}")
+                it.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+                self._batch_table.setItem(row, col_idx, it)
+
+            self._batch_table.setItem(row, 4, QTableWidgetItem(b["expiry_date"]))
+
+        # Auto-select if only one batch
+        if len(self._batches) == 1:
+            self._batch_table.selectRow(0)
+
+    # ── Row selected → pre-fill ────────────────────────────────────────────
+
+    def _on_row_selected(self) -> None:
+        row = self._batch_table.currentRow()
+        if row < 0 or row >= len(self._batches):
+            self._selected_row = -1
+            self._update_btn.setEnabled(False)
+            self._status_lbl.setText("ℹ  No batch selected — click a row in the table above.")
+            self._status_lbl.setStyleSheet("color: #888; font-size: 12px;")
+            return
+
+        self._selected_row = row
+        b = self._batches[row]
+
+        self._buy_edit.setText(f"{b['purchase_price']:.2f}")
+        self._sell_edit.setText(f"{b['selling_price']:.2f}")
+        try:
+            from datetime import datetime as _dt
+            self._expiry_edit.setDate(_dt.strptime(b["expiry_date"], "%Y-%m-%d").date())
+        except Exception:
+            pass
+
+        self._status_lbl.setText(
+            f"✔  <b>Batch {b['batch_number']}</b> selected  —  "
+            f"Current Stock: <b>{b['quantity']}</b> units"
+        )
+        self._status_lbl.setTextFormat(Qt.TextFormat.RichText)
+        self._status_lbl.setStyleSheet("color: #1e8449; font-size: 12px; font-weight: 600;")
+        self._update_btn.setEnabled(True)
+
+    # ── Save ──────────────────────────────────────────────────────────────
 
     def _save(self) -> None:
-        try:
-            purchase_price = float(self.purchase_price_edit.text())
-            selling_price  = float(self.selling_price_edit.text())
-        except ValueError:
-            QMessageBox.warning(self, "Invalid input", "Prices must be numeric.")
+        if self._selected_row < 0 or self._selected_row >= len(self._batches):
+            QMessageBox.warning(self, "No batch selected",
+                                "Click a batch row above first.")
             return
-        if not self.batch_number_edit.text().strip():
-            QMessageBox.warning(self, "Missing field", "Batch number is required.")
-            return
-        qt_date = self.expiry_edit.date()
-        expiry = date(qt_date.year(), qt_date.month(), qt_date.day())
+
+        b            = self._batches[self._selected_row]
+        batch_id     = b["batch_id"]
+        batch_number = b["batch_number"]
+        old_qty      = b["quantity"]
+        qty          = self._qty_spin.value()
+
+        # Parse prices
+        new_buy = new_sell = None
+        for text, name in [(self._buy_edit.text().strip(),  "purchase price"),
+                           (self._sell_edit.text().strip(), "selling price")]:
+            if text:
+                try:
+                    val = float(text)
+                    if name == "purchase price":
+                        new_buy = val
+                    else:
+                        new_sell = val
+                except ValueError:
+                    QMessageBox.warning(self, "Invalid price",
+                                        f"'{text}' is not a valid {name}.")
+                    return
+
+        qt_d       = self._expiry_edit.date()
+        new_expiry = date(qt_d.year(), qt_d.month(), qt_d.day())
+        expiry_changed = new_expiry.isoformat() != b["expiry_date"]
+
+        changes: list[str] = []
+
+        # Step 1: update prices/expiry
+        if new_buy or new_sell or expiry_changed:
+            try:
+                medicine_service.edit_batch(
+                    batch_id=batch_id,
+                    purchase_price=new_buy,
+                    selling_price=new_sell,
+                    expiry_date=new_expiry if expiry_changed else None,
+                )
+                if new_buy:       changes.append(f"Buy price → Rs {new_buy:.2f}")
+                if new_sell:      changes.append(f"Sell price → Rs {new_sell:.2f}")
+                if expiry_changed: changes.append(f"Expiry → {new_expiry.isoformat()}")
+            except ApplicationError as exc:
+                QMessageBox.critical(self, "Could not update", str(exc))
+                return
+
+        # Step 2: add quantity
         try:
-            medicine_service.add_manual_batch(
+            medicine_service.add_stock_to_existing_batch(
                 medicine_id=self.medicine_id,
-                batch_number=self.batch_number_edit.text().strip(),
-                purchase_price=purchase_price,
-                selling_price=selling_price,
-                quantity=self.quantity_spin.value(),
-                expiry_date=expiry,
-                wardrobe_code=self.wardrobe_edit.text().strip() or None,
-                rack_code=self.rack_edit.text().strip() or None,
-                shelf_code=self.shelf_edit.text().strip() or None,
+                batch_number=batch_number,
+                quantity=qty,
             )
         except ApplicationError as exc:
-            QMessageBox.critical(self, "Could not add batch", str(exc))
+            QMessageBox.critical(self, "Could not update stock", str(exc))
             return
+
+        msg = (
+            f"Batch:          {batch_number}\n"
+            f"Previous Stock: {old_qty} units\n"
+            f"Added:          {qty} units\n"
+            f"New Stock:      {old_qty + qty} units"
+        )
+        if changes:
+            msg += "\n\nAlso updated:\n" + "\n".join(f"  • {c}" for c in changes)
+
+        QMessageBox.information(self, "✔  Stock Updated", msg)
         self.accept()
 
 
 # ── Medicines Page ────────────────────────────────────────────────────────
 
 class MedicinesPage(QWidget):
-    """
-    Full-width table — 10 columns, all always visible.
-    Clicking a row opens a MedicineDetailDialog popup.
-    """
+    """Full-width table. Double-click a row for detail. + Batch opens Update Stock dialog."""
 
-    # column indices  (Barcode removed)
     _C_ID      = 0
     _C_NAME    = 1
     _C_FORMULA = 2
@@ -410,45 +766,34 @@ class MedicinesPage(QWidget):
         self.search_edit.textChanged.connect(self._on_search_changed)
         root.addWidget(self.search_edit)
 
-        # ── Table — full width, 10 columns ─────────────────────────────────
+        # ── Table ──────────────────────────────────────────────────────────
         self.table = QTableWidget(0, 9)
         self.table.setHorizontalHeaderLabels([
             "ID", "Name", "Formula", "Brand", "Dosage Form",
             "Stock", "Status", "Min Stock", "Actions",
         ])
-
         hh = self.table.horizontalHeader()
         hh.setDefaultAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
-
-        # Interactive: user can drag column edges; Name stretches
         hh.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
         hh.setStretchLastSection(False)
 
-        # Set sensible default widths
-        self.table.setColumnWidth(self._C_ID,      42)
-        self.table.setColumnWidth(self._C_NAME,   175)
-        self.table.setColumnWidth(self._C_FORMULA, 110)
-        self.table.setColumnWidth(self._C_BRAND,   95)
-        self.table.setColumnWidth(self._C_DOSAGE,  100)
-        self.table.setColumnWidth(self._C_STOCK,    55)
-        self.table.setColumnWidth(self._C_STATUS,  120)
-        self.table.setColumnWidth(self._C_MINSTK,   78)
-        # Actions: 4 × 72px + 3 × 4px gap = 300px
-        self.table.setColumnWidth(self._C_ACTIONS, 308)
+        self.table.setColumnWidth(self._C_ID,       42)
+        self.table.setColumnWidth(self._C_NAME,    175)
+        self.table.setColumnWidth(self._C_FORMULA,  110)
+        self.table.setColumnWidth(self._C_BRAND,     95)
+        self.table.setColumnWidth(self._C_DOSAGE,   100)
+        self.table.setColumnWidth(self._C_STOCK,     55)
+        self.table.setColumnWidth(self._C_STATUS,   120)
+        self.table.setColumnWidth(self._C_MINSTK,    78)
+        self.table.setColumnWidth(self._C_ACTIONS,  308)
 
         self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self.table.setAlternatingRowColors(True)
         self.table.verticalHeader().setDefaultSectionSize(34)
-        self.table.setShowGrid(True)
-        self.table.setSortingEnabled(False)
-
-        # Double-click row → detail popup
         self.table.doubleClicked.connect(self._on_row_double_clicked)
-
         root.addWidget(self.table, 1)
 
-        # ── Row count label ─────────────────────────────────────────────────
         self._count_label = QLabel("")
         self._count_label.setStyleSheet("color: #888; font-size: 11px;")
         root.addWidget(self._count_label)
@@ -460,22 +805,17 @@ class MedicinesPage(QWidget):
     def _on_search_changed(self, text: str) -> None:
         self._debounce.stop()
         if not text.strip():
-            self.refresh()   # immediate clear
+            self.refresh()
         else:
             self._debounce.start()
 
-    # ── Row double-click → detail dialog ──────────────────────────────────
-
     def _on_row_double_clicked(self, index) -> None:
-        row = index.row()
-        id_item = self.table.item(row, self._C_ID)
-        if id_item is None:
-            return
-        try:
-            mid = int(id_item.text())
-        except ValueError:
-            return
-        MedicineDetailDialog(mid, self).exec()
+        id_item = self.table.item(index.row(), self._C_ID)
+        if id_item:
+            try:
+                MedicineDetailDialog(int(id_item.text()), self).exec()
+            except ValueError:
+                pass
 
     # ── CRUD ──────────────────────────────────────────────────────────────
 
@@ -494,8 +834,7 @@ class MedicinesPage(QWidget):
     def _toggle_active(self, medicine_id: int, currently_active: bool) -> None:
         action = "deactivate" if currently_active else "reactivate"
         if QMessageBox.question(
-            self,
-            f"Confirm {action.title()}",
+            self, f"Confirm {action.title()}",
             f"Are you sure you want to {action} this medicine?",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
         ) != QMessageBox.StandardButton.Yes:
@@ -531,18 +870,15 @@ class MedicinesPage(QWidget):
                 item.setTextAlignment(align | Qt.AlignmentFlag.AlignVCenter)
                 return item
 
-            center = Qt.AlignmentFlag.AlignCenter
+            ctr = Qt.AlignmentFlag.AlignCenter
 
-            self.table.setItem(row, self._C_ID,      cell(str(med.id), center))
+            self.table.setItem(row, self._C_ID,      cell(str(med.id), ctr))
             self.table.setItem(row, self._C_NAME,    cell(med.name))
             self.table.setItem(row, self._C_FORMULA, cell(med.generic_formula or ""))
             self.table.setItem(row, self._C_BRAND,   cell(med.brand_name or ""))
             self.table.setItem(row, self._C_DOSAGE,  cell(
-                med.dosage_form.value if med.dosage_form else "")
-            )
-
-            qty_item = cell(str(total_qty), center)
-            self.table.setItem(row, self._C_STOCK, qty_item)
+                med.dosage_form.value if med.dosage_form else ""))
+            self.table.setItem(row, self._C_STOCK,   cell(str(total_qty), ctr))
 
             st_item = QTableWidgetItem(status)
             st_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignVCenter)
@@ -550,11 +886,11 @@ class MedicinesPage(QWidget):
             st_item.setFont(bold)
             self.table.setItem(row, self._C_STATUS, st_item)
 
-            self.table.setItem(row, self._C_MINSTK,  cell(str(med.min_stock_level), center))
+            self.table.setItem(row, self._C_MINSTK, cell(str(med.min_stock_level), ctr))
 
             # ── Actions ───────────────────────────────────────────────────
-            actions_widget = QWidget()
-            al = QHBoxLayout(actions_widget)
+            aw = QWidget()
+            al = QHBoxLayout(aw)
             al.setContentsMargins(4, 3, 4, 3)
             al.setSpacing(4)
 
@@ -562,43 +898,42 @@ class MedicinesPage(QWidget):
                 b = QPushButton(label)
                 b.setFixedHeight(26)
                 b.setFixedWidth(72)
-                style = (
-                    "font-size: 11px; padding: 0px; border-radius: 3px; "
-                    "border: 1px solid rgba(0,0,0,0.15);"
-                )
+                s = ("font-size: 11px; padding: 0px; border-radius: 3px; "
+                     "border: 1px solid rgba(0,0,0,0.15);")
                 if colour:
-                    style += f" background-color: {colour}; color: white;"
-                b.setStyleSheet(style)
+                    s += f" background-color: {colour}; color: white;"
+                b.setStyleSheet(s)
                 return b
 
-            detail_btn = _btn("Detail", "#5d6d7e")
-            detail_btn.setToolTip("View full batch & location detail (or double-click row)")
-            detail_btn.clicked.connect(
+            det_btn = _btn("Detail", "#5d6d7e")
+            det_btn.setToolTip("View full detail (or double-click row)")
+            det_btn.clicked.connect(
                 lambda _, mid=med.id: MedicineDetailDialog(mid, self).exec()
             )
 
-            edit_btn = _btn("Edit", "#1a5276")
-            edit_btn.clicked.connect(lambda _, mid=med.id: self._edit_medicine(mid))
+            edt_btn = _btn("Edit", "#1a5276")
+            edt_btn.clicked.connect(
+                lambda _, mid=med.id: self._edit_medicine(mid)
+            )
 
-            batch_btn = _btn("+ Batch", "#117a65")
-            batch_btn.setToolTip("Add a new batch / stock entry")
-            batch_btn.clicked.connect(
+            bat_btn = _btn("+ Batch", "#117a65")
+            bat_btn.setToolTip("Update stock / add new batch")
+            bat_btn.clicked.connect(
                 lambda _, mid=med.id, mn=med.name: self._add_batch(mid, mn)
             )
 
             is_active = med.is_active
-            toggle_label = "Deactivate" if is_active else "Reactivate"
-            toggle_colour = "#922b21" if is_active else "#1e8449"
-            toggle_btn = _btn(toggle_label, toggle_colour)
-            toggle_btn.clicked.connect(
+            tog_btn = _btn("Deactivate" if is_active else "Reactivate",
+                           "#922b21" if is_active else "#1e8449")
+            tog_btn.clicked.connect(
                 lambda _, mid=med.id, a=is_active: self._toggle_active(mid, a)
             )
 
-            al.addWidget(detail_btn)
-            al.addWidget(edit_btn)
-            al.addWidget(batch_btn)
-            al.addWidget(toggle_btn)
-            self.table.setCellWidget(row, self._C_ACTIONS, actions_widget)
+            al.addWidget(det_btn)
+            al.addWidget(edt_btn)
+            al.addWidget(bat_btn)
+            al.addWidget(tog_btn)
+            self.table.setCellWidget(row, self._C_ACTIONS, aw)
 
         count = len(medicines)
         self._count_label.setText(

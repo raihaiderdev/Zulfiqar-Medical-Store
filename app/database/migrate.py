@@ -47,17 +47,29 @@ def run_migrations_to_head() -> None:
     root = _resource_root()
     alembic_ini = root / "alembic.ini"
     if not alembic_ini.exists():
-        # Dev environments that haven't run `alembic upgrade head` manually
-        # yet, or an unusual packaging layout — fall back to create_all()
-        # rather than crashing the app on launch.
+        # Dev environments or unusual packaging layout — fall back to create_all().
         from app.database.session import init_db
-
         init_db()
         seed_permissions()
         return
 
-    config = Config(str(alembic_ini))
-    config.set_main_option("script_location", str(root / "database" / "migrations"))
-    command.upgrade(config, "head")
-    # Seed permission rows AFTER schema is up to date.
+    try:
+        config = Config(str(alembic_ini))
+        config.set_main_option("script_location", str(root / "database" / "migrations"))
+        # Suppress alembic's own logging setup so it doesn't try to call
+        # logging.config.fileConfig (which may not be available in a frozen build).
+        config.attributes["configure_logger"] = False
+        command.upgrade(config, "head")
+    except Exception as exc:
+        # Alembic failed (common in frozen builds due to logging.config issues).
+        # Fall back to create_all() which is safe — it's a no-op if tables exist.
+        import logging
+        logging.getLogger(__name__).warning(
+            "Alembic upgrade failed (%s) — falling back to create_all(). "
+            "This is safe on an existing database.", exc
+        )
+        from app.database.session import init_db
+        init_db()
+
+    # Always seed permissions after schema is current.
     seed_permissions()
