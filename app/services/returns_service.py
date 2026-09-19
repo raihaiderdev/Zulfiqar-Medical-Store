@@ -3,6 +3,12 @@ Returns & stock adjustments (Phase 1 §16, §17 clearance, §47.5-6). Every
 path here writes its own stock_transaction and never edits the original
 sale/purchase record in place — corrections are additive, reversal
 entries, per Phase 1 §47.7.
+
+Exception: after a sale return, the Sale.status is updated to
+PARTIALLY_REFUNDED (or REFUNDED if all items are returned) so the
+dashboard revenue figures stay accurate and the cashier can see the
+return was processed.  The sale.total is also reduced by the returned
+value so "Total Sales" on the dashboard reflects net revenue.
 """
 from __future__ import annotations
 
@@ -10,8 +16,8 @@ from datetime import date
 from typing import Optional, TypedDict
 
 from app.database.session import session_scope
-from app.models import PurchaseItem, PurchaseReturn, PurchaseReturnItem, SaleItem, SaleReturn, SaleReturnItem
-from app.models.enums import StockTxnType
+from app.models import PurchaseItem, PurchaseReturn, PurchaseReturnItem, Sale, SaleItem, SaleReturn, SaleReturnItem
+from app.models.enums import SaleStatus, StockTxnType
 from app.security.decorators import require_permission
 from app.security.session_context import current_session
 from app.services import audit_service, stock_service
@@ -104,6 +110,39 @@ def process_sale_return(
             entity_id=sale_return.id,
             new_value={"sale_id": sale_id, "lines": len(lines), "restock": restock},
         )
+
+        # ── Update the Sale's status and total to reflect the return ───────
+        sale = session.get(Sale, sale_id)
+        if sale:
+            # Calculate total returned value for this return
+            returned_value = 0.0
+            for line in lines:
+                sale_item = session.get(SaleItem, line["sale_item_id"])
+                if sale_item:
+                    returned_value += float(sale_item.unit_price) * line["quantity"]
+
+            # Reduce sale total (net of return)
+            new_total = round(max(0.0, float(sale.total) - returned_value), 2)
+            sale.total = new_total
+
+            # Check if ALL items are fully returned → REFUNDED, else PARTIALLY_REFUNDED
+            all_returned = True
+            for item in sale.items:
+                already_returned = (
+                    session.query(SaleReturnItem)
+                    .join(SaleReturn)
+                    .filter(SaleReturnItem.sale_item_id == item.id)
+                    .with_entities(SaleReturnItem.quantity)
+                    .all()
+                )
+                total_ret = sum(q for (q,) in already_returned)
+                if total_ret < item.quantity:
+                    all_returned = False
+                    break
+
+            sale.status = SaleStatus.REFUNDED if all_returned else SaleStatus.PARTIALLY_REFUNDED
+            session.add(sale)
+
         return sale_return.id
 
 
@@ -236,3 +275,40 @@ def write_off_expired_batch(batch_id: int, reason: Optional[str] = None) -> None
             entity="medicine_batches",
             entity_id=batch.id,
         )
+
+
+@require_permission("returns.process")
+def get_sale_returnable_items(sale_id: int) -> list[dict]:
+    """
+    Return the line items of a sale together with how many units are still
+    returnable (original qty minus already-returned qty).
+    Used to populate the Return dialog.
+    """
+    with session_scope() as session:
+        sale = session.get(Sale, sale_id)
+        if sale is None:
+            raise NotFoundError(f"Sale {sale_id} not found.")
+
+        result = []
+        for item in sale.items:
+            already_returned = (
+                session.query(SaleReturnItem)
+                .join(SaleReturn)
+                .filter(SaleReturnItem.sale_item_id == item.id)
+                .with_entities(SaleReturnItem.quantity)
+                .all()
+            )
+            total_ret = sum(q for (q,) in already_returned)
+            returnable = item.quantity - total_ret
+            if returnable > 0:
+                result.append({
+                    "sale_item_id":   item.id,
+                    "medicine_name":  item.batch.medicine.name,
+                    "batch_number":   item.batch.batch_number,
+                    "sold_quantity":  item.quantity,
+                    "already_returned": total_ret,
+                    "returnable":     returnable,
+                    "unit_price":     float(item.unit_price),
+                    "line_total":     item.line_total,
+                })
+        return result

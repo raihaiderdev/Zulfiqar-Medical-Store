@@ -117,10 +117,12 @@ class DashboardPage(QWidget):
 
         self.refresh()
 
-        # F2: Fire the session-once expiry alert after the dashboard loads.
-        # Use a short delay so the window is fully visible first.
-        from PySide6.QtCore import QTimer
-        QTimer.singleShot(800, lambda: ExpiryAlertManager.maybe_show_alert(self))
+    def showEvent(self, event) -> None:
+        """Auto-refresh whenever the dashboard becomes visible — ensures
+        the expired count and badge always reflect the latest DB state
+        without requiring the user to click Refresh manually."""
+        super().showEvent(event)
+        self.refresh()
 
     def refresh(self) -> None:
         try:

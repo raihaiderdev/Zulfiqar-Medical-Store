@@ -120,17 +120,17 @@ class ExpiryAlertManager:
 
     @classmethod
     def alert_count(cls) -> dict:
-        """Returns {'expired': N, 'very_soon': N, 'soon': N, 'total': N}."""
-        if not cls._cache:
-            cls._cache = get_expiry_alerts()
-        expired = sum(1 for a in cls._cache if a["severity"] == "EXPIRED")
+        """Returns {'expired': N, 'very_soon': N, 'soon': N, 'total': N}.
+        Always reloads from DB — never serves stale cache."""
+        cls._cache = get_expiry_alerts()
+        expired   = sum(1 for a in cls._cache if a["severity"] == "EXPIRED")
         very_soon = sum(1 for a in cls._cache if a["severity"] == "EXPIRING VERY SOON")
-        soon = sum(1 for a in cls._cache if a["severity"] == "EXPIRING SOON")
+        soon      = sum(1 for a in cls._cache if a["severity"] == "EXPIRING SOON")
         return {
-            "expired": expired,
+            "expired":   expired,
             "very_soon": very_soon,
-            "soon": soon,
-            "total": expired + very_soon + soon,
+            "soon":      soon,
+            "total":     expired + very_soon + soon,
         }
 
     @classmethod

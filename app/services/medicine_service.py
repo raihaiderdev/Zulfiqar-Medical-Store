@@ -235,6 +235,13 @@ def add_stock_to_existing_batch(
         )
         return batch.id
 
+    # Clear expiry alert cache after restock so dashboard/inventory refresh
+    try:
+        from app.ui.common.expiry_alert import ExpiryAlertManager
+        ExpiryAlertManager.reset_for_session()
+    except Exception:
+        pass
+
 
 @require_permission("medicine.add")
 def add_manual_batch(
@@ -535,6 +542,15 @@ def edit_batch(
             old_value=old_values,
             new_value=new_values,
         )
+
+    # Expiry date changed — clear cached alert data so the expiry section
+    # refreshes and no longer shows this batch if it is now in the future.
+    if expiry_date is not None:
+        try:
+            from app.ui.common.expiry_alert import ExpiryAlertManager
+            ExpiryAlertManager.reset_for_session()
+        except Exception:
+            pass
 
 
 @require_permission("medicine.view")
