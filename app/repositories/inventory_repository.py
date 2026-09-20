@@ -40,7 +40,7 @@ class MedicineRepository(BaseRepository[Medicine]):
     def get_by_barcode(self, barcode: str) -> Optional[Medicine]:
         return self.session.query(Medicine).filter(Medicine.barcode == barcode).one_or_none()
 
-    def search(self, term: str, active_only: bool = True, limit: int = 100) -> list[Medicine]:
+    def search(self, term: str, active_only: bool = True, limit: int = 10000) -> list[Medicine]:
         # Eager-load the full relationship tree needed after the session closes:
         #   batches → shelf → rack → wardrobe  (for location display)
         #   batches → supplier                 (for supplier name display)

@@ -81,12 +81,13 @@ def get_expiry_alerts() -> list[dict]:
         exp = date.fromisoformat(b["expiry_date"])
         alerts.append({
             "medicine_name": b["medicine_name"],
-            "batch_number": b["batch_number"],
-            "expiry_date": b["expiry_date"],
+            "medicine_id":   b.get("medicine_id", ""),
+            "batch_number":  b["batch_number"],
+            "expiry_date":   b["expiry_date"],
             "days_remaining": _days_remaining(today, exp),
-            "quantity": b["quantity"],
-            "severity": "EXPIRED",
-            "location": b.get("location", ""),
+            "quantity":      b["quantity"],
+            "severity":      "EXPIRED",
+            "location":      b.get("location", ""),
         })
 
     # Add expiring-soon batches — apply 7-month calendar filter
@@ -96,12 +97,13 @@ def get_expiry_alerts() -> list[dict]:
         if severity in ("EXPIRING VERY SOON", "EXPIRING SOON"):
             alerts.append({
                 "medicine_name": b["medicine_name"],
-                "batch_number": b["batch_number"],
-                "expiry_date": b["expiry_date"],
+                "medicine_id":   b.get("medicine_id", ""),
+                "batch_number":  b["batch_number"],
+                "expiry_date":   b["expiry_date"],
                 "days_remaining": _days_remaining(today, exp),
-                "quantity": b["quantity"],
-                "severity": severity,
-                "location": b.get("location", ""),
+                "quantity":      b["quantity"],
+                "severity":      severity,
+                "location":      b.get("location", ""),
             })
 
     alerts.sort(key=lambda x: x["expiry_date"])
@@ -193,10 +195,10 @@ class ExpiryAlertDialog(QDialog):
         info.setStyleSheet("color: #555; font-size: 12px; padding: 4px 0;")
         layout.addWidget(info)
 
-        # Table
-        self.table = QTableWidget(0, 7)
+        # Table — now with 8 columns including Medicine ID for clarity
+        self.table = QTableWidget(0, 8)
         self.table.setHorizontalHeaderLabels([
-            "Severity", "Medicine", "Batch", "Expiry Date",
+            "Severity", "Medicine", "Med ID", "Batch", "Expiry Date",
             "Days Left", "Qty Available", "Location"
         ])
         self.table.horizontalHeader().setStretchLastSection(True)
@@ -221,8 +223,15 @@ class ExpiryAlertDialog(QDialog):
             self.table.setItem(row, 0, sev_item)
 
             self.table.setItem(row, 1, QTableWidgetItem(alert["medicine_name"]))
-            self.table.setItem(row, 2, QTableWidgetItem(alert["batch_number"]))
-            self.table.setItem(row, 3, QTableWidgetItem(alert["expiry_date"]))
+
+            # Medicine ID — helps distinguish duplicates with same name
+            med_id_item = QTableWidgetItem(str(alert.get("medicine_id", "")))
+            med_id_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignVCenter)
+            med_id_item.setForeground(Qt.GlobalColor.darkBlue)
+            self.table.setItem(row, 2, med_id_item)
+
+            self.table.setItem(row, 3, QTableWidgetItem(alert["batch_number"]))
+            self.table.setItem(row, 4, QTableWidgetItem(alert["expiry_date"]))
 
             days = alert["days_remaining"]
             days_text = str(days) if days >= 0 else f"{abs(days)} days overdue"
@@ -231,10 +240,10 @@ class ExpiryAlertDialog(QDialog):
                 days_item.setForeground(Qt.GlobalColor.red)
             elif days <= 30:
                 days_item.setForeground(Qt.GlobalColor.darkRed)
-            self.table.setItem(row, 4, days_item)
+            self.table.setItem(row, 5, days_item)
 
-            self.table.setItem(row, 5, QTableWidgetItem(str(alert["quantity"])))
-            self.table.setItem(row, 6, QTableWidgetItem(alert.get("location", "")))
+            self.table.setItem(row, 6, QTableWidgetItem(str(alert["quantity"])))
+            self.table.setItem(row, 7, QTableWidgetItem(alert.get("location", "")))
 
         self.table.resizeColumnsToContents()
 

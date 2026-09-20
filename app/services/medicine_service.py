@@ -351,6 +351,7 @@ def expiry_report(warning_days: int = 90) -> dict:
         def _serialize(b: MedicineBatch) -> dict:
             return {
                 "batch_id": b.id,
+                "medicine_id": b.medicine_id,
                 "medicine_name": b.medicine.name,
                 "batch_number": b.batch_number,
                 "quantity": b.quantity,

@@ -1,0 +1,62 @@
+====================================================================
+  ZULFIQAR MEDICAL STORE — Pharmacy Management System v2.1
+  Installation Guide
+====================================================================
+
+REQUIREMENTS
+------------
+• Windows 10 or Windows 11 (64-bit)
+• No Python installation required
+• No internet connection required
+• Minimum 500 MB free disk space
+
+HOW TO INSTALL
+--------------
+1. Extract this ZIP file to any folder you like.
+   Recommended: C:\ZulfiqarMedicalStore\
+
+2. Open the extracted folder — you will see:
+     ZulfiqarMedicalStore.exe
+     _internal\  (required — do NOT delete or move)
+
+3. Double-click  ZulfiqarMedicalStore.exe  to launch.
+
+4. On FIRST LAUNCH, a Setup Wizard will appear:
+   • Choose "Start fresh" for a new installation, OR
+   • Choose "Restore from backup" if you have a .db backup
+     from a previous version — all your medicines and data
+     will be restored automatically.
+
+CREATE DESKTOP SHORTCUT
+------------------------
+• On first launch, the app will offer to create a Desktop shortcut.
+• Click Yes to add it to your Desktop for easy access.
+• You can also right-click ZulfiqarMedicalStore.exe → Send to → Desktop.
+
+FINDING YOUR BACKUP FILE (for restore)
+---------------------------------------
+If you had a previous version installed:
+1. Go to your old installation folder
+2. Open the  backups\  subfolder
+3. Copy the latest  pharmacy_backup_YYYY-MM-DD_HHMMSS.db  file
+4. Use that file when the Setup Wizard asks for a backup
+
+WHERE DATA IS STORED
+---------------------
+All data is stored in:
+  database\pharmacy.db   (inside the installation folder)
+
+BACKUPS are stored in:
+  backups\   (inside the installation folder)
+
+TIP: Copy the backups\ folder to a USB drive regularly
+     to protect your data.
+
+SUPPORT
+-------
+For technical support contact your system administrator.
+Logs are stored in:  logs\application.log
+
+====================================================================
+  Version 2.1  |  Zulfiqar Medical Store
+====================================================================

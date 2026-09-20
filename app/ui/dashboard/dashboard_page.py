@@ -117,8 +117,8 @@ class DashboardPage(QWidget):
         self.content_layout.addWidget(self.kpi_grid_container)
 
         self.content_layout.addWidget(QLabel("Sales by period"))
-        self.sales_table = QTableWidget(0, 3)
-        self.sales_table.setHorizontalHeaderLabels(["Period", "Sales", "Gross Profit"])
+        self.sales_table = QTableWidget(0, 4)
+        self.sales_table.setHorizontalHeaderLabels(["Period", "Sales (Net)", "Discount Given", "Gross Profit"])
         self.sales_table.horizontalHeader().setStretchLastSection(True)
         self.sales_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self.content_layout.addWidget(self.sales_table)
@@ -183,7 +183,10 @@ class DashboardPage(QWidget):
             self.sales_table.setItem(row, 1, QTableWidgetItem(
                 f"{cur} {values['sales']:.2f}"
             ))
-            self.sales_table.setItem(row, 2, QTableWidgetItem(
+            disc_item = QTableWidgetItem(f"- {cur} {values.get('discount', 0):.2f}")
+            disc_item.setForeground(__import__("PySide6.QtCore", fromlist=["Qt"]).Qt.GlobalColor.darkYellow)
+            self.sales_table.setItem(row, 2, disc_item)
+            self.sales_table.setItem(row, 3, QTableWidgetItem(
                 f"{cur} {values['profit']:.2f}"
             ))
 

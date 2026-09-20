@@ -37,6 +37,7 @@ class PeriodFinancials:
     expenses: float
     net_profit: float
     returned_units: int
+    total_discount: float = 0.0     # total discount given to customers
 
 
 def _returned_quantity_by_sale_item(session, sale_item_ids: list[int]) -> dict[int, int]:
@@ -56,12 +57,15 @@ def sales_and_profit_report(period_start: date, period_end: date) -> PeriodFinan
     """
     Computes revenue/COGS/gross profit for [period_start, period_end]
     (inclusive), counting only COMPLETED sales and netting out returned
-    units so a returned item is never double-counted as revenue.
+    units AND all discounts (both item-level line_discount AND sale-level
+    discount_total) so revenue is never over-reported.
     """
     with session_scope() as session:
-        sale_items = (
-            session.query(SaleItem)
-            .join(Sale)
+        # Fetch all completed sales in range (with items)
+        from sqlalchemy.orm import selectinload as _sel
+        sales = (
+            session.query(Sale)
+            .options(_sel(Sale.items))
             .filter(
                 Sale.sale_date >= period_start,
                 Sale.sale_date <= period_end,
@@ -70,23 +74,40 @@ def sales_and_profit_report(period_start: date, period_end: date) -> PeriodFinan
             .all()
         )
 
-        item_ids = [si.id for si in sale_items]
-        returned_by_item = _returned_quantity_by_sale_item(session, item_ids)
+        sale_item_ids = [item.id for s in sales for item in s.items]
+        returned_by_item = _returned_quantity_by_sale_item(session, sale_item_ids)
 
         revenue = 0.0
         cogs = 0.0
         returned_units_total = 0
+        total_discount = 0.0
 
-        for item in sale_items:
-            returned_qty = returned_by_item.get(item.id, 0)
-            returned_units_total += returned_qty
-            net_qty = max(0, item.quantity - returned_qty)
-            # Discount is attributed to the line as a whole; scale it down
-            # proportionally if some units on the line were returned.
-            proportion = (net_qty / item.quantity) if item.quantity else 0
-            line_discount = float(item.line_discount) * proportion
-            revenue += float(item.unit_price) * net_qty - line_discount
-            cogs += float(item.unit_cost) * net_qty
+        for sale in sales:
+            # Sum of item-level line_discounts on this sale
+            item_disc_sum = sum(float(item.line_discount) for item in sale.items)
+            # Sale-level discount not already distributed to items
+            sale_level_extra_disc = max(0.0, float(sale.discount_total) - item_disc_sum)
+
+            for item in sale.items:
+                returned_qty = returned_by_item.get(item.id, 0)
+                returned_units_total += returned_qty
+                net_qty = max(0, item.quantity - returned_qty)
+                proportion = (net_qty / item.quantity) if item.quantity else 0
+                line_discount = float(item.line_discount) * proportion
+                revenue += float(item.unit_price) * net_qty - line_discount
+                cogs += float(item.unit_cost) * net_qty
+                total_discount += line_discount
+
+            # Deduct the undistributed sale-level discount from revenue
+            # (proportionally scaled if some items were returned)
+            if sale_level_extra_disc > 0 and sale.items:
+                total_sold = sum(item.quantity for item in sale.items)
+                total_returned = sum(returned_by_item.get(item.id, 0) for item in sale.items)
+                if total_sold > 0:
+                    net_proportion = max(0.0, (total_sold - total_returned) / total_sold)
+                    applied_sale_disc = sale_level_extra_disc * net_proportion
+                    revenue -= applied_sale_disc
+                    total_discount += applied_sale_disc
 
         expenses_total = (
             session.query(func.coalesce(func.sum(Expense.amount), 0))
@@ -107,6 +128,7 @@ def sales_and_profit_report(period_start: date, period_end: date) -> PeriodFinan
             expenses=round(expenses_total, 2),
             net_profit=net_profit,
             returned_units=returned_units_total,
+            total_discount=round(total_discount, 2),
         )
 
 

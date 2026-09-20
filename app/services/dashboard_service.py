@@ -52,7 +52,11 @@ def admin_dashboard_kpis() -> dict:
     sales_kpis = {}
     for label, (start, end) in periods.items():
         financials = sales_and_profit_report(start, end)
-        sales_kpis[label] = {"sales": financials.revenue, "profit": financials.gross_profit}
+        sales_kpis[label] = {
+            "sales": financials.revenue,
+            "profit": financials.gross_profit,
+            "discount": financials.total_discount,
+        }
 
     return {
         "total_medicines": int(total_medicines or 0),
