@@ -88,6 +88,16 @@ class DashboardPage(QWidget):
         self._expiry_badge.setVisible(False)
         header_row.addWidget(self._expiry_badge)
 
+        # Quick restore button on dashboard
+        restore_btn = QPushButton("📂  Restore Backup")
+        restore_btn.setStyleSheet(
+            "background: #2980b9; color: white; font-weight: 600; "
+            "padding: 4px 12px; border-radius: 4px; font-size: 12px;"
+        )
+        restore_btn.setToolTip("Restore database from a backup file")
+        restore_btn.clicked.connect(self._restore_backup)
+        header_row.addWidget(restore_btn)
+
         refresh_btn = QPushButton("Refresh")
         refresh_btn.clicked.connect(self.refresh)
         header_row.addWidget(refresh_btn)
@@ -194,3 +204,41 @@ class DashboardPage(QWidget):
 
     def _show_expiry_alert(self) -> None:
         ExpiryAlertManager.show_alert_forced(self)
+
+    def _restore_backup(self) -> None:
+        from PySide6.QtWidgets import QFileDialog
+        from app.services import backup_service
+        from pathlib import Path
+        from app.config.settings import BACKUP_DIR
+
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Select Backup File to Restore",
+            str(BACKUP_DIR), "SQLite Database (*.db);;All Files (*)"
+        )
+        if not path:
+            return
+
+        confirm = QMessageBox.warning(
+            self, "Confirm Restore",
+            "Restoring will replace the CURRENT database with the selected backup.\n\n"
+            "A safety copy of the current database will be saved first.\n\n"
+            f"Backup file: {path}\n\n"
+            "Continue?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
+        if confirm != QMessageBox.StandardButton.Yes:
+            return
+
+        try:
+            safety = backup_service.restore_backup(Path(path))
+        except ApplicationError as exc:
+            QMessageBox.critical(self, "Restore failed", str(exc))
+            return
+
+        QMessageBox.information(
+            self, "✔  Database Restored",
+            f"Database successfully restored from:\n{path}\n\n"
+            f"Safety backup of previous data saved to:\n{safety}\n\n"
+            "Please restart the application for all changes to take effect."
+        )
+        self.refresh()
