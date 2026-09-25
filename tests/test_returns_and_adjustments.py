@@ -78,7 +78,9 @@ def test_sale_return_without_restock_does_not_increase_quantity():
 
     with session_scope() as session:
         batch = session.query(MedicineBatch).filter_by(batch_number="DR-1").one()
-        assert batch.quantity == 45  # 50 - 5 sold, return not restocked
+        # 50 initial - 5 sold - 2 returned as DAMAGED (removed from circulation) = 43
+        # restock=False means damaged goods are written off, NOT returned to shelf
+        assert batch.quantity == 43  # 50 - 5 sold - 2 damaged write-off
 
 
 def test_purchase_return_decreases_stock():

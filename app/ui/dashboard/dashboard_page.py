@@ -142,22 +142,37 @@ class DashboardPage(QWidget):
             return
 
         # ── KPI cards ──────────────────────────────────────────────────────
-        # (title, value, navigate_to_label, accent_colour)
         cur = settings.currency
         card_specs = [
-            ("Total Medicines", str(kpis["total_medicines"]), "Medicines", "#eaf4fb"),
-            ("Total Stock Units", str(kpis["total_stock_quantity"]), "Inventory", "#eaf4fb"),
-            ("Low Stock Items", str(kpis["low_stock_count"]), "Inventory", "#fff8e1"),
-            ("Expired Batches", str(kpis["expired_count"]), "Inventory", "#fdecea"),
-            ("Expiring Soon", str(kpis["expiring_soon_count"]), "Inventory", "#fff3e0"),
-            ("Active Users", str(kpis["active_user_count"]), "Users", "#eaf4fb"),
-            ("Total Purchases",
-             f"{cur} {kpis['total_purchases_value']:.2f}", "Purchases", "#eaf4fb"),
-            ("Stock Value (Cost)",
-             f"{cur} {kpis['stock_valuation']['cost_value']:.2f}", "Inventory", "#eaf4fb"),
-            ("Stock Value (Retail)",
-             f"{cur} {kpis['stock_valuation']['retail_value']:.2f}", "Inventory", "#eaf4fb"),
+            ("Total Medicines",    str(kpis["total_medicines"]),        "Medicines",  "#eaf4fb"),
+            ("Total Stock Units",  str(kpis["total_stock_quantity"]),   "Inventory",  "#eaf4fb"),
+            ("Low Stock Items",    str(kpis["low_stock_count"]),        "Inventory",  "#fff8e1"),
+            ("Expired Batches",    str(kpis["expired_count"]),          "Inventory",  "#fdecea"),
+            ("Expiring Soon",      str(kpis["expiring_soon_count"]),    "Inventory",  "#fff3e0"),
+            ("Active Users",       str(kpis["active_user_count"]),      "Users",      "#eaf4fb"),
+            ("Total Purchases",    f"{cur} {kpis['total_purchases_value']:.2f}",
+             "Purchases", "#eaf4fb"),
+            ("Stock Value (Cost)", f"{cur} {kpis['stock_valuation']['cost_value']:.2f}",
+             "Inventory",  "#eaf4fb"),
+            ("Stock Value (Retail)", f"{cur} {kpis['stock_valuation']['retail_value']:.2f}",
+             "Inventory",  "#eaf4fb"),
         ]
+
+        # ── Phase 1: Intelligence summary cards (admin only) ───────────────
+        intel = kpis.get("intelligence")
+        if intel:
+            waste_val = intel.get("potential_waste_value", 0)
+            card_specs += [
+                ("📦 Need Reorder",
+                 str(intel.get("items_needing_reorder", 0)),
+                 "📦 Reorder Suggestions", "#e8f4fd"),
+                ("💤 Dead Stock Items",
+                 str(intel.get("dead_stock_count", 0)),
+                 "💤 Dead Stock", "#fdecea"),
+                (f"⚠ Potential Waste",
+                 f"{cur} {waste_val:,.0f}",
+                 "⚠ Expiry Risk", "#fff3e0"),
+            ]
 
         # Rebuild grid
         while self.kpi_grid.count():

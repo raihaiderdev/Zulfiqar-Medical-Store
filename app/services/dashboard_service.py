@@ -58,14 +58,27 @@ def admin_dashboard_kpis() -> dict:
             "discount": financials.total_discount,
         }
 
+    # ── Phase 1: intelligence summary (only if user has stock.intelligence) ──
+    intelligence_summary = None
+    from app.security.session_context import current_session as _cs
+    if _cs.has_permission("stock.intelligence"):
+        try:
+            from app.services.inventory_intelligence_service import (
+                get_stock_intelligence_summary,
+            )
+            intelligence_summary = get_stock_intelligence_summary()
+        except Exception:
+            intelligence_summary = None   # never crash the dashboard
+
     return {
-        "total_medicines": int(total_medicines or 0),
-        "total_stock_quantity": int(total_stock_qty or 0),
-        "low_stock_count": len(low_stock),
-        "expired_count": len(expiry["expired"]),
-        "expiring_soon_count": len(expiry["expiring_soon"]),
+        "total_medicines":       int(total_medicines or 0),
+        "total_stock_quantity":  int(total_stock_qty or 0),
+        "low_stock_count":       len(low_stock),
+        "expired_count":         len(expiry["expired"]),
+        "expiring_soon_count":   len(expiry["expiring_soon"]),
         "total_purchases_value": float(total_purchases_value or 0),
-        "active_user_count": int(active_user_count or 0),
-        "stock_valuation": stock_valuation,
-        "sales": sales_kpis,
+        "active_user_count":     int(active_user_count or 0),
+        "stock_valuation":       stock_valuation,
+        "sales":                 sales_kpis,
+        "intelligence":          intelligence_summary,
     }

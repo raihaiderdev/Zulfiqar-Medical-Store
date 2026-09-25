@@ -149,6 +149,20 @@ class MainWindow(QMainWindow):
             from app.ui.inventory.inventory_page import InventoryPage
             self._add_page("Inventory", InventoryPage())
 
+        # ── Phase 1: Smart Inventory Intelligence pages ────────────────────
+        if has_perm("stock.intelligence"):
+            from app.ui.inventory.reorder_page import ReorderPage
+            self._add_page("📦 Reorder Suggestions", ReorderPage())
+
+            from app.ui.inventory.expiry_risk_page import ExpiryRiskPage
+            self._add_page("⚠ Expiry Risk", ExpiryRiskPage())
+
+            from app.ui.inventory.dead_stock_page import DeadStockPage
+            self._add_page("💤 Dead Stock", DeadStockPage())
+
+            from app.ui.inventory.analytics_page import InventoryAnalyticsPage
+            self._add_page("📊 Inv. Analytics", InventoryAnalyticsPage())
+
         if has_perm("sales.create"):
             from app.ui.sales.pos_page import SalesPOSPage
             self._add_page("Sales / POS", SalesPOSPage())
@@ -160,6 +174,11 @@ class MainWindow(QMainWindow):
         if has_perm("purchases.manage"):
             from app.ui.purchases.purchases_page import PurchasesPage
             self._add_page("Purchases", PurchasesPage())
+
+        # Phase 2: Purchase Orders
+        if has_perm("purchase_orders.create"):
+            from app.ui.purchase_orders.purchase_orders_page import PurchaseOrdersPage
+            self._add_page("📋 Purchase Orders", PurchaseOrdersPage())
 
         if has_perm("customers.manage"):
             from app.ui.customers.customers_page import CustomersPage

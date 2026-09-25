@@ -34,8 +34,20 @@ def _initialize_schema():
         for key, description in {**GRANTABLE_PERMISSIONS, **ADMIN_ONLY_PERMISSIONS}.items():
             session.add(Permission(key=key, description=description, admin_only=key in ADMIN_ONLY_PERMISSIONS))
     yield
+    # Dispose all engine connections before deleting the temp DB file.
+    # On Windows, open file handles prevent deletion (WinError 32).
+    try:
+        from app.database.session import get_engine
+        get_engine().dispose()
+    except Exception:
+        pass
+    import time
+    time.sleep(0.1)   # brief pause for background threads to release handles
     if os.path.exists(_TEST_DB_PATH):
-        os.remove(_TEST_DB_PATH)
+        try:
+            os.remove(_TEST_DB_PATH)
+        except PermissionError:
+            pass  # non-critical in CI — temp file will be cleaned up eventually
 
 
 @pytest.fixture(autouse=True)

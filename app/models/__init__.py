@@ -22,6 +22,16 @@ from app.models.stock_transaction import StockTransaction  # noqa: F401
 from app.models.expense import ExpenseCategory, Expense  # noqa: F401
 from app.models.settings import ApplicationSetting, ReportSnapshot  # noqa: F401
 
+# Phase 2 — Purchase Orders and Cashier Shifts
+from app.models.purchase_order import (  # noqa: F401
+    PurchaseOrder,
+    PurchaseOrderItem,
+    PurchaseOrderReceipt,
+    PurchaseOrderReceiptItem,
+    POStatus,
+)
+from app.models.cashier_shift import CashierShift, ShiftStatus  # noqa: F401
+
 __all__ = [
     "Base",
     "User", "Permission", "UserPermission",
@@ -35,4 +45,8 @@ __all__ = [
     "StockTransaction",
     "ExpenseCategory", "Expense",
     "ApplicationSetting", "ReportSnapshot",
+    # Phase 2
+    "PurchaseOrder", "PurchaseOrderItem",
+    "PurchaseOrderReceipt", "PurchaseOrderReceiptItem", "POStatus",
+    "CashierShift", "ShiftStatus",
 ]
