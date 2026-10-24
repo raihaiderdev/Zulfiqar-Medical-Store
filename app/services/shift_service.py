@@ -192,7 +192,6 @@ def _compute_shift_summary(session, shift: CashierShift) -> dict:
     closed_at = shift.closed_at or _utcnow()
 
     # Total sales by cashier in shift window
-    from sqlalchemy import cast, Date as SADate
     cash_sales_q = (
         session.query(func.coalesce(func.sum(Sale.total), 0))
         .filter(

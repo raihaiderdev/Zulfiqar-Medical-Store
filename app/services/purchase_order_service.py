@@ -339,7 +339,11 @@ def list_purchase_orders(
     limit: int = 200,
 ) -> list[dict]:
     with session_scope() as session:
-        q = session.query(PurchaseOrder)
+        from sqlalchemy.orm import selectinload
+        q = session.query(PurchaseOrder).options(
+            selectinload(PurchaseOrder.supplier),
+            selectinload(PurchaseOrder.items),
+        )
         if status:
             q = q.filter(PurchaseOrder.status == status)
         if supplier_id:

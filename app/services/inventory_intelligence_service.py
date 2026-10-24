@@ -642,7 +642,6 @@ def get_stock_intelligence_summary() -> dict:
                 needs_reorder += 1
 
         # High expiry risk batches
-        cutoff = today + timedelta(days=214)
         high_risk_batches = (
             session.query(func.count(MedicineBatch.id))
             .filter(

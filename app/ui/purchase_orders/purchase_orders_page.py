@@ -1,4 +1,4 @@
-"""
+﻿"""
 Purchase Orders page — Phase 2.
 
 Full PO lifecycle: Create → Approve → Receive → Complete.
@@ -386,6 +386,7 @@ class PurchaseOrdersPage(QWidget):
             return
 
         self._table.setRowCount(0)
+        self._po_ids = []
         for po in orders:
             row = self._table.rowCount()
             self._table.insertRow(row)
@@ -408,6 +409,7 @@ class PurchaseOrdersPage(QWidget):
             cell = QWidget(); cl = QHBoxLayout(cell)
             cl.setContentsMargins(3, 2, 3, 2); cl.addWidget(view_btn)
             self._table.setCellWidget(row, 6, cell)
+            self._po_ids.append(po["po_id"])
 
         self._count_lbl.setText(
             f"{len(orders)} purchase order(s)  |  "
@@ -425,8 +427,6 @@ class PurchaseOrdersPage(QWidget):
             self.refresh()
 
     def _on_double_click(self, index) -> None:
-        # get po_id from po_number cell, look it up
         row = index.row()
-        po_num = self._table.item(row, 0)
-        if po_num:
-            self.refresh()
+        if 0 <= row < len(self._po_ids):
+            self._open_detail(self._po_ids[row])
