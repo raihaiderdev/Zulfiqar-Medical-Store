@@ -32,6 +32,9 @@ from app.models.purchase_order import (  # noqa: F401
 )
 from app.models.cashier_shift import CashierShift, ShiftStatus  # noqa: F401
 
+# Doctor Fees
+from app.models.doctor_fee import DoctorFee  # noqa: F401
+
 __all__ = [
     "Base",
     "User", "Permission", "UserPermission",
@@ -49,4 +52,6 @@ __all__ = [
     "PurchaseOrder", "PurchaseOrderItem",
     "PurchaseOrderReceipt", "PurchaseOrderReceiptItem", "POStatus",
     "CashierShift", "ShiftStatus",
+    # Doctor Fees
+    "DoctorFee",
 ]

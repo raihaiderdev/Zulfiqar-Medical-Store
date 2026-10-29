@@ -192,6 +192,10 @@ class MainWindow(QMainWindow):
             from app.ui.expenses.expenses_page import ExpensesPage
             self._add_page("Expenses", ExpensesPage())
 
+        if has_perm("doctor_fees.view"):
+            from app.ui.doctor_fees.doctor_fees_page import DoctorFeesPage
+            self._add_page("👨‍⚕️ Doctor Fees", DoctorFeesPage())
+
         if has_perm("reports.view"):
             from app.ui.reports.reports_page import ReportsPage
             self._add_page("Reports", ReportsPage())

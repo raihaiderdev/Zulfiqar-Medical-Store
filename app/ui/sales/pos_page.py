@@ -163,6 +163,54 @@ class SalesPOSPage(QWidget):
         summary_layout.addWidget(self._summary_total_label)
         root.addWidget(summary_frame)
 
+        # ── Doctor Fee row ────────────────────────────────────────────────
+        fee_frame = QFrame()
+        fee_frame.setStyleSheet(
+            "QFrame { background: #fef9e7; border-radius: 4px; "
+            "border: 1px solid #f0c040; padding: 4px; }"
+        )
+        fee_layout = QHBoxLayout(fee_frame)
+        fee_layout.setContentsMargins(10, 5, 10, 5)
+        fee_layout.setSpacing(10)
+
+        fee_icon = QLabel("👨‍⚕️")
+        fee_icon.setStyleSheet("font-size: 16px;")
+        fee_layout.addWidget(fee_icon)
+
+        fee_lbl = QLabel("Doctor Fee:")
+        fee_lbl.setStyleSheet("font-weight: 600; color: #7d6608;")
+        fee_layout.addWidget(fee_lbl)
+
+        self.doctor_name_edit = QLineEdit()
+        self.doctor_name_edit.setPlaceholderText("Doctor name (optional)")
+        self.doctor_name_edit.setFixedWidth(180)
+        self.doctor_name_edit.setStyleSheet("padding: 4px; font-size: 12px;")
+        self.doctor_name_edit.textChanged.connect(self._on_doctor_fee_changed)
+        fee_layout.addWidget(self.doctor_name_edit)
+
+        fee_amount_lbl = QLabel(f"Fee ({settings.currency}):")
+        fee_amount_lbl.setStyleSheet("font-weight: 600; color: #7d6608;")
+        fee_layout.addWidget(fee_amount_lbl)
+
+        self.doctor_fee_edit = QLineEdit()
+        self.doctor_fee_edit.setPlaceholderText("0.00")
+        self.doctor_fee_edit.setFixedWidth(90)
+        self.doctor_fee_edit.setStyleSheet("padding: 4px; font-size: 12px;")
+        self.doctor_fee_edit.textChanged.connect(self._on_doctor_fee_changed)
+        fee_layout.addWidget(self.doctor_fee_edit)
+
+        self._fee_total_label = QLabel("")
+        self._fee_total_label.setStyleSheet("font-size: 11px; color: #7d6608;")
+        fee_layout.addWidget(self._fee_total_label)
+
+        fee_layout.addStretch()
+
+        fee_hint = QLabel("Leave blank to skip")
+        fee_hint.setStyleSheet("font-size: 11px; color: #aaa;")
+        fee_layout.addWidget(fee_hint)
+
+        root.addWidget(fee_frame)
+
         # ── Payment row ───────────────────────────────────────────────────
         payment_frame = QFrame()
         payment_frame.setStyleSheet(
@@ -214,6 +262,7 @@ class SalesPOSPage(QWidget):
 
         self._selected_medicine_id: Optional[int] = None
         self._selected_medicine_detail: Optional[dict] = None
+        self._doctor_fee_amount: float = 0.0   # validated fee held in memory
 
     # ── Search callbacks ──────────────────────────────────────────────────
 
@@ -262,6 +311,17 @@ class SalesPOSPage(QWidget):
         _, price = data
         self.unit_price_label.setText(f"@ {settings.currency} {price:.2f} each")
 
+    def _on_doctor_fee_changed(self) -> None:
+        """Revalidate the fee amount and update totals whenever either field changes."""
+        try:
+            val = float(self.doctor_fee_edit.text() or 0)
+            self._doctor_fee_amount = val if val > 0 else 0.0
+        except ValueError:
+            self._doctor_fee_amount = 0.0
+        self._update_summary()
+        if not self._amount_paid_user_edited:
+            self._auto_fill_amount_paid()
+
     # ── Payment callbacks ─────────────────────────────────────────────────
 
     def _on_discount_changed(self) -> None:
@@ -276,13 +336,13 @@ class SalesPOSPage(QWidget):
         self._amount_paid_user_edited = True
 
     def _auto_fill_amount_paid(self) -> None:
-        """Set Amount Paid = subtotal − discount (the exact amount due)."""
+        """Set Amount Paid = subtotal − discount + doctor_fee (the exact amount due)."""
         subtotal = sum(l.line_total for l in self.cart)
         try:
             discount = float(self.discount_edit.text() or 0)
         except ValueError:
             discount = 0.0
-        total = max(0.0, subtotal - discount)
+        total = max(0.0, subtotal - discount) + self._doctor_fee_amount
         self.amount_paid_edit.blockSignals(True)
         self.amount_paid_edit.setText(f"{total:.2f}")
         self.amount_paid_edit.blockSignals(False)
@@ -354,8 +414,11 @@ class SalesPOSPage(QWidget):
     def _clear_cart(self) -> None:
         self.cart.clear()
         self._amount_paid_user_edited = False
+        self._doctor_fee_amount = 0.0
         self.discount_edit.setText("0")
         self.amount_paid_edit.setText("0")
+        self.doctor_name_edit.clear()
+        self.doctor_fee_edit.clear()
         self.search_widget.clear_search()
         self._selected_medicine_id = None
         self._selected_medicine_detail = None
@@ -414,22 +477,37 @@ class SalesPOSPage(QWidget):
         except ValueError:
             discount = 0.0
 
-        total = max(0.0, subtotal - discount)
+        med_total = max(0.0, subtotal - discount)
+        grand_total = med_total + self._doctor_fee_amount
 
-        # Header total (top right)
-        self.total_label.setText(f"Total: {settings.currency} {total:.2f}")
+        # Header total (top right) — shows grand total including doctor fee
+        self.total_label.setText(f"Total: {settings.currency} {grand_total:.2f}")
 
         # Summary strip
         self._items_label.setText(
             f"Items: {len(self.cart)} line(s)  |  Total Qty: {total_items}"
         )
+
+        disc_str = f"  −  Discount: {settings.currency} {discount:.2f}" if discount > 0 else ""
         self._subtotal_label.setText(
-            f"Subtotal: {settings.currency} {subtotal:.2f}"
-            + (f"  −  Discount: {settings.currency} {discount:.2f}" if discount > 0 else "")
+            f"Subtotal: {settings.currency} {subtotal:.2f}{disc_str}"
         )
-        self._summary_total_label.setText(
-            f"Amount Due: {settings.currency} {total:.2f}"
-        )
+
+        # Doctor fee indicator
+        if self._doctor_fee_amount > 0:
+            self._fee_total_label.setText(
+                f"Added to bill: {settings.currency} {self._doctor_fee_amount:.2f}"
+            )
+            summary_text = (
+                f"Med: {settings.currency} {med_total:.2f}  "
+                f"+  Dr. Fee: {settings.currency} {self._doctor_fee_amount:.2f}  "
+                f"=  Amount Due: {settings.currency} {grand_total:.2f}"
+            )
+        else:
+            self._fee_total_label.setText("")
+            summary_text = f"Amount Due: {settings.currency} {grand_total:.2f}"
+
+        self._summary_total_label.setText(summary_text)
 
     # ── Complete sale ─────────────────────────────────────────────────────
 
@@ -444,6 +522,26 @@ class SalesPOSPage(QWidget):
             QMessageBox.warning(self, "Invalid input", "Discount and Amount Paid must be numeric.")
             return
 
+        # Validate doctor fee inputs BEFORE starting the sale
+        doctor_name = self.doctor_name_edit.text().strip()
+        fee_text = self.doctor_fee_edit.text().strip()
+        doctor_fee_dict = None
+
+        if doctor_name or fee_text:
+            # Either field filled — validate both
+            if not doctor_name:
+                QMessageBox.warning(self, "Doctor fee incomplete", "Enter the doctor name to include a fee.")
+                return
+            try:
+                fee_val = float(fee_text or 0)
+            except ValueError:
+                QMessageBox.warning(self, "Invalid fee", "Doctor fee amount must be a number.")
+                return
+            if fee_val <= 0:
+                QMessageBox.warning(self, "Invalid fee", "Doctor fee amount must be greater than zero.")
+                return
+            doctor_fee_dict = {"doctor_name": doctor_name, "amount": fee_val}
+
         lines = [
             {"medicine_id": line.medicine_id, "quantity": line.base_units_in_cart}
             for line in self.cart
@@ -451,17 +549,27 @@ class SalesPOSPage(QWidget):
 
         try:
             result = sales_service.complete_sale(
-                lines=lines, amount_paid=amount_paid, discount_total=discount
+                lines=lines,
+                amount_paid=amount_paid,
+                discount_total=discount,
+                doctor_fee=doctor_fee_dict,
             )
         except ApplicationError as exc:
-            QMessageBox.critical(self, "Sale failed", str(exc))
+            msg = str(exc)
+            if "please refresh your cart" in msg.lower():
+                QMessageBox.critical(self, "Stock Changed",
+                    msg + "\n\nPlease clear the cart and rebuild it to see current stock levels.")
+            else:
+                QMessageBox.critical(self, "Sale failed", msg)
             return
 
         cur = settings.currency
+        fee_line = f"Doctor Fee: {cur} {doctor_fee_dict['amount']:.2f}\n" if doctor_fee_dict else ""
         QMessageBox.information(
             self, "Sale Completed ✔",
             f"Invoice:      {result.invoice_number}\n"
-            f"Total:         {cur} {result.total:.2f}\n"
+            f"Med Total:   {cur} {result.total:.2f}\n"
+            f"{fee_line}"
             f"Paid:           {cur} {amount_paid:.2f}\n"
             f"Change due: {cur} {result.change_due:.2f}",
         )
@@ -470,8 +578,11 @@ class SalesPOSPage(QWidget):
         # Reset everything
         self.cart.clear()
         self._amount_paid_user_edited = False
+        self._doctor_fee_amount = 0.0
         self.discount_edit.setText("0")
         self.amount_paid_edit.setText("0")
+        self.doctor_name_edit.clear()
+        self.doctor_fee_edit.clear()
         self.search_widget.clear_search()
         self._selected_medicine_id = None
         self._selected_medicine_detail = None

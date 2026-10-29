@@ -24,7 +24,6 @@ from app.services import audit_service, stock_service
 from app.utils.exceptions import AuthorizationError, ValidationError
 from app.utils.numbering import next_invoice_number
 
-
 class SaleLineInput(TypedDict, total=False):
     medicine_id: int
     quantity: int
@@ -74,6 +73,7 @@ def complete_sale(
     discount_total: float = 0.0,
     notes: Optional[str] = None,
     allow_expired_override: bool = False,
+    doctor_fee: Optional[dict] = None,
 ) -> SaleResult:
     if not lines:
         raise ValidationError("A sale must have at least one line item.")
@@ -185,6 +185,24 @@ def complete_sale(
             entity_id=sale.id,
             new_value={"invoice_number": sale.invoice_number, "total": total},
         )
+
+        # Record doctor fee atomically in the same transaction
+        if doctor_fee:
+            import math as _math
+            from app.services.doctor_fee_service import _record_fee_in_session, _validate_amount, _validate_doctor_name
+            _validate_doctor_name(doctor_fee.get("doctor_name", ""))
+            _validate_amount(float(doctor_fee.get("amount", 0)))
+            _record_fee_in_session(
+                session,
+                fee_date=date.today(),
+                doctor_name=doctor_fee["doctor_name"],
+                amount=float(doctor_fee["amount"]),
+                payment_method=doctor_fee.get("payment_method"),
+                patient_reference=doctor_fee.get("patient_reference"),
+                notes=doctor_fee.get("notes"),
+                sale_reference=sale.invoice_number,
+                user_id=current_session.user_id,
+            )
 
         return SaleResult(
             sale_id=sale.id, invoice_number=sale.invoice_number, total=total, change_due=sale.change_due

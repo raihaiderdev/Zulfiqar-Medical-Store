@@ -31,6 +31,9 @@ GRANTABLE_PERMISSIONS: dict[str, str] = {
     "suppliers.manage": "Manage suppliers",
     "reports.view": "View reports",
     "returns.process": "Process sale/purchase returns",
+    "doctor_fees.view":    "View doctor fee records and daily collection summary",
+    "doctor_fees.record":  "Record new doctor fee entries (standalone or via POS bill)",
+    "doctor_fees.correct": "Correct or void a doctor fee entry",
 }
 
 ADMIN_ONLY_PERMISSIONS: dict[str, str] = {
