@@ -203,7 +203,13 @@ def receive_goods(
         raise ValidationError("At least one receipt line is required.")
 
     with session_scope() as session:
-        po = session.get(PurchaseOrder, po_id)
+        from sqlalchemy.orm import selectinload
+        po = (
+            session.query(PurchaseOrder)
+            .options(selectinload(PurchaseOrder.items))
+            .filter(PurchaseOrder.id == po_id)
+            .one_or_none()
+        )
         if po is None:
             raise NotFoundError(f"Purchase order {po_id} not found.")
         if po.status not in (POStatus.APPROVED, POStatus.PARTIALLY_RECEIVED):
@@ -249,8 +255,11 @@ def receive_goods(
                 expiry_date=line["expiry_date"],
             ))
 
-        # Update PO status
-        all_received = _check_all_received(session, po)
+        # Update PO status — compute received totals from the current lines input
+        # plus any previously received (queried before this receipt was added)
+        # to avoid relying on the session flush being visible to the JOIN query.
+        received_in_this_call = {line["po_item_id"]: line["received_quantity"] for line in lines}
+        all_received = _check_all_received_with_delta(session, po, received_in_this_call)
         po.status = POStatus.COMPLETED if all_received else POStatus.PARTIALLY_RECEIVED
         session.add(po)
 
@@ -263,6 +272,7 @@ def receive_goods(
                 "new_status": po.status.value,
             },
         )
+        receipt_id = receipt.id  # capture before session closes
 
     # Delegate stock creation to existing purchase_service (outside the session above
     # so purchase_service opens its own session_scope — same pattern used elsewhere).
@@ -285,12 +295,12 @@ def receive_goods(
 
     # Link the purchase record to the receipt
     with session_scope() as session:
-        r = session.get(PurchaseOrderReceipt, receipt.id)
+        r = session.get(PurchaseOrderReceipt, receipt_id)
         if r:
             r.purchase_id = purchase_id
             session.add(r)
 
-    return receipt.id
+    return receipt_id
 
 
 def _already_received(session, po_item_id: int) -> int:
@@ -307,6 +317,27 @@ def _already_received(session, po_item_id: int) -> int:
 def _check_all_received(session, po: PurchaseOrder) -> bool:
     for item in po.items:
         if _already_received(session, item.id) < item.ordered_quantity:
+            return False
+    return True
+
+
+def _check_all_received_with_delta(
+    session, po: PurchaseOrder, new_received: dict[int, int]
+) -> bool:
+    """
+    Check whether all ordered quantities are satisfied after accounting for
+    both previously-received amounts (from committed rows) AND the new receipt
+    lines being added in this same transaction (not yet committed).
+
+    `new_received` maps po_item_id → qty received in the current call.
+    """
+    for item in po.items:
+        # Quantities already in the DB from *previous* receipts only
+        # (current-transaction rows may not be visible through the JOIN query).
+        prev_received = _already_received(session, item.id)
+        this_call = new_received.get(item.id, 0)
+        total = prev_received + this_call
+        if total < item.ordered_quantity:
             return False
     return True
 

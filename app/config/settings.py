@@ -34,9 +34,8 @@ class AppSettings:
     expiry_warning_days_default: int = int(os.environ.get("PHARMACY_EXPIRY_WARNING_DAYS", "90"))
     session_timeout_minutes: int = int(os.environ.get("PHARMACY_SESSION_TIMEOUT_MIN", "30"))
     backup_retention_count: int = int(os.environ.get("PHARMACY_BACKUP_RETENTION", "14"))
-    max_discount_percent: float = float(os.environ.get("PHARMACY_MAX_DISCOUNT_PERCENT", "20"))
     expiry_clearance_override_enabled: bool = os.environ.get("PHARMACY_EXPIRY_CLEARANCE_OVERRIDE", "false").lower() == "true"
-    app_version: str = "1.0.0"
+    app_version: str = "2.2"
 
 
 settings = AppSettings()

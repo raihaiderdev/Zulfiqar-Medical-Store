@@ -1,12 +1,13 @@
 """
 Settings page (Phase 1 §33, §31). Admin-only pharmacy info fields plus
-working Backup and Restore buttons.
+working Backup and Restore buttons, plus expiry clearance toggle.
 """
 from __future__ import annotations
 
 from pathlib import Path
 
 from PySide6.QtWidgets import (
+    QCheckBox,
     QFileDialog,
     QFormLayout,
     QHBoxLayout,
@@ -39,6 +40,18 @@ class SettingsPage(QWidget):
         form.addRow("Pharmacy Name", self.name_edit)
         form.addRow("Address", self.address_edit)
         form.addRow("Phone", self.phone_edit)
+
+        # Expiry clearance override toggle
+        self._expiry_override_cb = QCheckBox(
+            "Allow selling expired batches (authorized override)"
+        )
+        self._expiry_override_cb.setToolTip(
+            "When enabled, users with the 'sales.override_expired' permission "
+            "can sell expired stock with an explicit override flag. "
+            "Keep disabled unless specifically required."
+        )
+        form.addRow("Expiry Clearance Override:", self._expiry_override_cb)
+
         root.addLayout(form)
 
         save_button = QPushButton("Save Settings")
@@ -62,12 +75,26 @@ class SettingsPage(QWidget):
         self.name_edit.setText(settings_service.get_setting("pharmacy.name", default="") or "")
         self.address_edit.setText(settings_service.get_setting("pharmacy.address", default="") or "")
         self.phone_edit.setText(settings_service.get_setting("pharmacy.phone", default="") or "")
+        override_val = settings_service.get_setting("expiry.clearance_override", default="false") or "false"
+        self._expiry_override_cb.setChecked(override_val.lower() == "true")
 
     def _save(self) -> None:
         try:
             settings_service.set_setting("pharmacy.name", self.name_edit.text().strip())
             settings_service.set_setting("pharmacy.address", self.address_edit.text().strip())
             settings_service.set_setting("pharmacy.phone", self.phone_edit.text().strip())
+            settings_service.set_setting(
+                "expiry.clearance_override",
+                "true" if self._expiry_override_cb.isChecked() else "false",
+            )
+            # Also update the in-process settings object so it takes effect immediately
+            # without requiring an app restart.
+            import app.config.settings as _cfg_mod
+            import dataclasses
+            _cfg_mod.settings = dataclasses.replace(
+                _cfg_mod.settings,
+                expiry_clearance_override_enabled=self._expiry_override_cb.isChecked(),
+            )
         except ApplicationError as exc:
             QMessageBox.critical(self, "Could not save settings", str(exc))
             return

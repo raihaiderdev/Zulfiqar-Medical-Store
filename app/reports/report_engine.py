@@ -38,6 +38,7 @@ class PeriodFinancials:
     net_profit: float
     returned_units: int
     total_discount: float = 0.0     # total discount given to customers
+    doctor_fee_revenue: float = 0.0 # doctor consultation fees collected in period
 
 
 def _returned_quantity_by_sale_item(session, sale_item_ids: list[int]) -> dict[int, int]:
@@ -119,6 +120,19 @@ def sales_and_profit_report(period_start: date, period_end: date) -> PeriodFinan
         gross_profit = round(revenue - cogs, 2)
         net_profit = round(gross_profit - expenses_total, 2)
 
+        # Doctor fee revenue (separate from medicine sales)
+        from app.models.doctor_fee import DoctorFee
+        doctor_fee_total = float(
+            session.query(func.coalesce(func.sum(DoctorFee.amount), 0))
+            .filter(
+                DoctorFee.fee_date >= period_start,
+                DoctorFee.fee_date <= period_end,
+                DoctorFee.status == "ACTIVE",
+            )
+            .scalar()
+            or 0
+        )
+
         return PeriodFinancials(
             period_start=period_start,
             period_end=period_end,
@@ -129,6 +143,7 @@ def sales_and_profit_report(period_start: date, period_end: date) -> PeriodFinan
             net_profit=net_profit,
             returned_units=returned_units_total,
             total_discount=round(total_discount, 2),
+            doctor_fee_revenue=round(doctor_fee_total, 2),
         )
 
 

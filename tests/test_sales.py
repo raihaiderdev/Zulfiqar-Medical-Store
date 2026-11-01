@@ -114,12 +114,27 @@ def test_discount_requires_permission():
     auth_service.logout()
 
 
-def test_discount_exceeding_cap_rejected():
+def test_discount_cannot_exceed_total():
+    """Discount is now uncapped — staff can give any amount — but cannot
+    exceed the sale subtotal (that would produce a negative total)."""
     med_id = _make_medicine_with_batch(quantity=50, selling_price=100)
-    with pytest.raises(ValidationError):
-        # settings.max_discount_percent default is 20% -> max 20 on a 100 subtotal
+
+    # A 50% discount is now perfectly fine — no cap.
+    result = sales_service.complete_sale(
+        lines=[{"medicine_id": med_id, "quantity": 1}], amount_paid=50, discount_total=50
+    )
+    assert result.total == 50
+
+    # A 100% discount is also fine (total = 0, change_due = 0).
+    result2 = sales_service.complete_sale(
+        lines=[{"medicine_id": med_id, "quantity": 1}], amount_paid=0, discount_total=100
+    )
+    assert result2.total == 0
+
+    # A discount larger than the subtotal must still be rejected.
+    with pytest.raises(ValidationError, match="[Dd]iscount cannot exceed"):
         sales_service.complete_sale(
-            lines=[{"medicine_id": med_id, "quantity": 1}], amount_paid=50, discount_total=50
+            lines=[{"medicine_id": med_id, "quantity": 1}], amount_paid=0, discount_total=150
         )
 
 

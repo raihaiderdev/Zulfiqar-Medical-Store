@@ -116,8 +116,13 @@ def complete_sale(
                 batch = session.get(MedicineBatch, line["batch_id"])
                 if batch is None:
                     raise ValidationError(f"Batch {line['batch_id']} not found.")
+                # Check expiry override: read from DB settings first (togglable from UI),
+                # fall back to the env-var frozen settings object.
+                from app.services.settings_service import get_setting as _get_setting
+                override_from_db = (_get_setting("expiry.clearance_override", default="false") or "false").lower() == "true"
+                override_enabled = override_from_db or settings.expiry_clearance_override_enabled
                 if batch.expiry_date < date.today() and not (
-                    allow_expired_override and settings.expiry_clearance_override_enabled
+                    allow_expired_override and override_enabled
                 ):
                     raise ValidationError(
                         f"Batch '{batch.batch_number}' is expired and cannot be sold "
@@ -161,16 +166,12 @@ def complete_sale(
                 )
                 subtotal += float(batch.selling_price) * qty - this_discount
 
-        max_allowed_discount = subtotal * (settings.max_discount_percent / 100.0)
-        if discount_total > max_allowed_discount + 0.01:
-            raise ValidationError(
-                f"Discount of {discount_total:.2f} exceeds the maximum allowed "
-                f"({settings.max_discount_percent}% = {max_allowed_discount:.2f})."
-            )
-
+        # No cap on discount amount — staff can give any discount they choose.
+        # The only constraint is that the total cannot go below zero
+        # (you cannot charge a negative price).
         total = round(subtotal - discount_total, 2)
         if total < 0:
-            raise ValidationError("Total cannot be negative after discount.")
+            raise ValidationError("Discount cannot exceed the sale total.")
 
         sale.subtotal = round(subtotal, 2)
         sale.total = total

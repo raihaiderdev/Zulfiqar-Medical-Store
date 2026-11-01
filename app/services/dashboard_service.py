@@ -56,6 +56,7 @@ def admin_dashboard_kpis() -> dict:
             "sales": financials.revenue,
             "profit": financials.gross_profit,
             "discount": financials.total_discount,
+            "doctor_fees": financials.doctor_fee_revenue,
         }
 
     # ── Phase 1: intelligence summary (only if user has stock.intelligence) ──

@@ -165,3 +165,35 @@ def test_users_and_settings_pages_admin_only(qt_app, monkeypatch):
     settings_page._save()
     settings_page.refresh()
     assert settings_page.name_edit.text() == "UI Smoke Pharmacy"
+
+
+def test_doctor_fees_page_renders(qt_app):
+    """Smoke test: DoctorFeesPage instantiates and both tabs load without errors."""
+    from app.ui.doctor_fees.doctor_fees_page import DoctorFeesPage
+
+    page = DoctorFeesPage()
+    # Both tabs should exist
+    assert page._tabs.count() == 2
+    # Records tab loads without exception
+    page._records_tab.refresh()
+    # Daily summary tab loads without exception
+    page._daily_tab.refresh()
+
+
+def test_forecast_page_renders(qt_app):
+    """Smoke test: ForecastPage instantiates with the correct empty state."""
+    from app.ui.inventory.forecast_page import ForecastPage
+
+    page = ForecastPage()
+    # Should start in empty state (no data loaded yet)
+    assert page._table.rowCount() == 0
+
+
+def test_purchase_orders_page_renders(qt_app):
+    """Smoke test: PurchaseOrdersPage instantiates and refreshes without errors."""
+    from app.ui.purchase_orders.purchase_orders_page import PurchaseOrdersPage
+
+    page = PurchaseOrdersPage()
+    page.refresh()
+    # Count label should be present
+    assert "purchase order" in page._count_lbl.text().lower()

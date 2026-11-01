@@ -228,6 +228,9 @@ class ReportsPage(QWidget):
 
             ("Returned Units",
              str(financials.returned_units), "#f5f6fa", "#555"),
+
+            ("Doctor Fees Collected",
+             f"{cur} {financials.doctor_fee_revenue:.2f}", "#fef9e7", "#7d6608"),
         ]
 
         for idx, (title, value, bg, fg) in enumerate(card_specs):

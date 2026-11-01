@@ -120,7 +120,7 @@ def close_shift(
             },
         )
 
-    return {**summary, "actual_closing_cash": actual_closing_cash, "variance": variance}
+    return {**summary, "actual_closing_cash": actual_closing_cash, "variance": variance, "status": "CLOSED"}
 
 
 @require_permission("shifts.manage")
