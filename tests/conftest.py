@@ -6,6 +6,10 @@ user management) rather than the ORM directly.
 *import time*, so the DB URL env var must be set before anything under
 `app.*` is imported anywhere in the test run. conftest.py is collected by
 pytest before test modules, which is what makes this ordering work.
+
+SAFETY GUARD: This file sets PHARMACY_DB_URL to a disposable temp file
+BEFORE importing any app module. This ensures tests NEVER touch the real
+database/pharmacy.db, no matter how they are run.
 """
 from __future__ import annotations
 
@@ -14,9 +18,20 @@ import tempfile
 
 import pytest
 
+# ── CRITICAL: must be set before any app.* import ────────────────────────
 _fd, _TEST_DB_PATH = tempfile.mkstemp(suffix=".db")
 os.close(_fd)
 os.environ["PHARMACY_DB_URL"] = f"sqlite:///{_TEST_DB_PATH}"
+
+# Double-check: refuse to run if somehow pointing at the real database
+_real_db = os.path.abspath(
+    os.path.join(os.path.dirname(__file__), "..", "database", "pharmacy.db")
+)
+_test_db = os.path.abspath(_TEST_DB_PATH)
+assert _test_db != _real_db, (
+    "SAFETY ABORT: test DB URL points at the real pharmacy.db! "
+    "Tests must never write to the live database."
+)
 
 from app.database.session import init_db, session_scope  # noqa: E402
 from app.security.session_context import current_session  # noqa: E402
