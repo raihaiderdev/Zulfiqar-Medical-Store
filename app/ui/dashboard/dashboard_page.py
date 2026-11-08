@@ -177,50 +177,99 @@ class DashboardPage(QWidget):
 
         # Invoice header row
         self._order_header_lbl = QLabel("No sale recorded yet today")
+        self._order_header_lbl.setWordWrap(True)
         self._order_header_lbl.setStyleSheet(
-            "font-size: 13px; font-weight: 700; color: #154c89;"
+            "font-size: 12px; font-weight: 600; color: #154c89; "
+            "background: #eaf4fb; border-radius: 4px; padding: 6px 10px; "
+            "border: 1px solid #aed6f1;"
         )
         last_order_outer.addWidget(self._order_header_lbl)
 
         # Items table
         self._order_table = QTableWidget(0, 5)
         self._order_table.setHorizontalHeaderLabels([
-            "Medicine", "Qty", f"Unit Price ({settings.currency})",
-            f"Discount ({settings.currency})", f"Line Total ({settings.currency})"
+            "Medicine", "Qty",
+            f"Unit Price ({settings.currency})",
+            f"Discount ({settings.currency})",
+            f"Line Total ({settings.currency})"
         ])
-        self._order_table.horizontalHeader().setSectionResizeMode(
-            0, QHeaderView.ResizeMode.Stretch
-        )
-        for c in [1, 2, 3, 4]:
-            self._order_table.horizontalHeader().setSectionResizeMode(
-                c, QHeaderView.ResizeMode.ResizeToContents
-            )
+
+        hh = self._order_table.horizontalHeader()
+        hh.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)          # Medicine — fills space
+        hh.setSectionResizeMode(1, QHeaderView.ResizeMode.Fixed)             # Qty
+        hh.setSectionResizeMode(2, QHeaderView.ResizeMode.Fixed)             # Unit Price
+        hh.setSectionResizeMode(3, QHeaderView.ResizeMode.Fixed)             # Discount
+        hh.setSectionResizeMode(4, QHeaderView.ResizeMode.Fixed)             # Line Total
+        self._order_table.setColumnWidth(1, 55)                              # Qty
+        self._order_table.setColumnWidth(2, 130)                             # Unit Price
+        self._order_table.setColumnWidth(3, 120)                             # Discount
+        self._order_table.setColumnWidth(4, 120)                             # Line Total
+
         self._order_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self._order_table.setSelectionMode(QTableWidget.SelectionMode.NoSelection)
+        self._order_table.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self._order_table.setAlternatingRowColors(True)
-        self._order_table.setMaximumHeight(160)
+        self._order_table.verticalHeader().setVisible(False)
+        self._order_table.setShowGrid(True)
+        self._order_table.setStyleSheet(
+            "QTableWidget { border: 1px solid #dee2e6; border-radius: 4px; "
+            "font-size: 12px; gridline-color: #e9ecef; }"
+            "QHeaderView::section { background: #f8f9fa; border: none; "
+            "border-bottom: 2px solid #dee2e6; padding: 5px 8px; "
+            "font-weight: 600; font-size: 12px; color: #495057; }"
+            "QTableWidget::item { padding: 5px 8px; }"
+        )
+        self._order_table.setMinimumHeight(80)
+        self._order_table.setMaximumHeight(220)
         last_order_outer.addWidget(self._order_table)
 
-        # Totals row
-        totals_row = QHBoxLayout()
-        totals_row.setSpacing(30)
+        # Totals strip — styled card row below the table
+        totals_strip = QFrame()
+        totals_strip.setStyleSheet(
+            "QFrame { background: #f8f9fa; border-radius: 6px; "
+            "border: 1px solid #dee2e6; padding: 2px; }"
+        )
+        totals_row = QHBoxLayout(totals_strip)
+        totals_row.setContentsMargins(14, 8, 14, 8)
+        totals_row.setSpacing(0)
 
         def _order_kpi(title: str, colour: str = "#333"):
-            v = QVBoxLayout(); v.setSpacing(1)
-            val = QLabel("—"); val.setStyleSheet(f"font-weight:700;font-size:14px;color:{colour};")
-            lbl = QLabel(title); lbl.setStyleSheet("font-size:11px;color:#888;")
-            v.addWidget(val); v.addWidget(lbl)
-            return v, val
+            """Returns (outer QFrame, mutable value QLabel)."""
+            card = QFrame()
+            card.setStyleSheet("QFrame { border: none; }")
+            v = QVBoxLayout(card)
+            v.setContentsMargins(12, 4, 12, 4)
+            v.setSpacing(2)
+            val = QLabel("—")
+            val.setStyleSheet(
+                f"font-weight: 700; font-size: 15px; color: {colour};"
+            )
+            lbl = QLabel(title)
+            lbl.setStyleSheet("font-size: 11px; color: #888;")
+            v.addWidget(val)
+            v.addWidget(lbl)
+            return card, val
 
-        lay_ot,   self._order_total_lbl    = _order_kpi(f"Total ({settings.currency})", "#154c89")
-        lay_od,   self._order_disc_lbl     = _order_kpi("Discount",                     "#e65100")
-        lay_ofee, self._order_fee_lbl      = _order_kpi("Doctor Fee",                   "#7d6608")
-        lay_op,   self._order_profit_lbl   = _order_kpi("Profit",                       "#1e8449")
-        lay_oc,   self._order_change_lbl   = _order_kpi("Change Due",                   "#555")
+        # Vertical divider helper
+        def _vdiv():
+            d = QFrame()
+            d.setFrameShape(QFrame.Shape.VLine)
+            d.setStyleSheet("color: #dee2e6;")
+            return d
 
-        for lay in (lay_ot, lay_od, lay_ofee, lay_op, lay_oc):
-            totals_row.addLayout(lay)
+        card_ot,   self._order_total_lbl  = _order_kpi(f"Total ({settings.currency})", "#154c89")
+        card_od,   self._order_disc_lbl   = _order_kpi(f"Discount ({settings.currency})", "#e65100")
+        card_ofee, self._order_fee_lbl    = _order_kpi(f"Doctor Fee ({settings.currency})", "#7d6608")
+        card_op,   self._order_profit_lbl = _order_kpi(f"Profit ({settings.currency})", "#1e8449")
+        card_oc,   self._order_change_lbl = _order_kpi("Change Due",                    "#555")
+
+        for i, card in enumerate((card_ot, card_od, card_ofee, card_op, card_oc)):
+            totals_row.addWidget(card)
+            if i < 4:
+                totals_row.addWidget(_vdiv())
         totals_row.addStretch()
-        last_order_outer.addLayout(totals_row)
+
+        last_order_outer.addWidget(totals_strip)
 
         self.content_layout.addWidget(self._last_order_frame)
         self.content_layout.addStretch()
