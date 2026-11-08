@@ -164,7 +164,7 @@ class MedicineSearchWidget(QWidget):
         # -- Debounce timer --
         self._debounce = QTimer()
         self._debounce.setSingleShot(True)
-        self._debounce.setInterval(200)  # 200 ms debounce
+        self._debounce.setInterval(350)  # 350 ms — reduces DB queries during fast typing
         self._debounce.timeout.connect(self._do_search)
 
         # -- Signals --
@@ -236,6 +236,9 @@ class MedicineSearchWidget(QWidget):
         term = self.search_edit.text().strip()
         if not term:
             self._clear_results()
+            return
+        # Require at least 2 characters to avoid a full-table scan on every keystroke
+        if len(term) < 2 and not term.isdigit():
             return
 
         try:

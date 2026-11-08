@@ -83,6 +83,59 @@ def _sellable_stock(session, medicine_id: int, as_of: date) -> int:
     return int(rows or 0)
 
 
+def _bulk_sellable_stock(session, as_of: date) -> dict[int, int]:
+    """Sellable stock for ALL medicines in one query — medicine_id → qty."""
+    rows = (
+        session.query(
+            MedicineBatch.medicine_id,
+            func.coalesce(func.sum(MedicineBatch.quantity), 0).label("qty"),
+        )
+        .filter(
+            MedicineBatch.is_active.is_(True),
+            MedicineBatch.expiry_date >= as_of,
+        )
+        .group_by(MedicineBatch.medicine_id)
+        .all()
+    )
+    return {r.medicine_id: int(r.qty) for r in rows}
+
+
+def _bulk_units_sold(session, period_start: date, period_end: date) -> dict[int, float]:
+    """Units sold per medicine in one query — medicine_id → units."""
+    rows = (
+        session.query(
+            MedicineBatch.medicine_id,
+            func.coalesce(func.sum(SaleItem.quantity), 0).label("sold"),
+        )
+        .join(SaleItem, SaleItem.batch_id == MedicineBatch.id)
+        .join(Sale, Sale.id == SaleItem.sale_id)
+        .filter(
+            Sale.sale_date >= period_start,
+            Sale.sale_date <= period_end,
+            Sale.status == SaleStatus.COMPLETED,
+        )
+        .group_by(MedicineBatch.medicine_id)
+        .all()
+    )
+    return {r.medicine_id: float(r.sold) for r in rows}
+
+
+def _bulk_last_sale_date(session) -> dict[int, date]:
+    """Most recent sale date per medicine — medicine_id → date."""
+    rows = (
+        session.query(
+            MedicineBatch.medicine_id,
+            func.max(Sale.sale_date).label("last_sale"),
+        )
+        .join(SaleItem, SaleItem.batch_id == MedicineBatch.id)
+        .join(Sale, Sale.id == SaleItem.sale_id)
+        .filter(Sale.status == SaleStatus.COMPLETED)
+        .group_by(MedicineBatch.medicine_id)
+        .all()
+    )
+    return {r.medicine_id: r.last_sale for r in rows if r.last_sale}
+
+
 def _units_sold_in_period(session, medicine_id: int,
                            period_start: date, period_end: date) -> float:
     """Total units sold for a medicine in [period_start, period_end]."""
@@ -189,9 +242,13 @@ def get_reorder_suggestions(
             .all()
         )
 
+        # Bulk fetch stock and sales in 2 queries instead of 2×N
+        stock_map = _bulk_sellable_stock(session, today)
+        sold_map  = _bulk_units_sold(session, period_start, today)
+
         for med in medicines:
-            stock   = _sellable_stock(session, med.id, today)
-            sold    = _units_sold_in_period(session, med.id, period_start, today)
+            stock   = stock_map.get(med.id, 0)
+            sold    = sold_map.get(med.id, 0.0)
             ads     = round(sold / analysis_days, 4) if analysis_days > 0 else 0.0
 
             days_remaining: Optional[float] = (
@@ -623,23 +680,35 @@ def get_stock_intelligence_summary() -> dict:
     today = date.today()
 
     with session_scope() as session:
-        # Items needing reorder
+        # Bulk fetch stock and sales in 2 queries instead of 2×N
         period_start = today - timedelta(days=DEFAULT_ANALYSIS_DAYS)
-        medicines    = (
+        stock_map    = _bulk_sellable_stock(session, today)
+        sold_map     = _bulk_units_sold(session, period_start, today)
+        last_sale_map = _bulk_last_sale_date(session)
+
+        medicines = (
             session.query(Medicine)
             .filter(Medicine.is_active.is_(True))
             .all()
         )
 
         needs_reorder = 0
+        dead          = 0
+        threshold     = today - timedelta(days=DEFAULT_DEAD_STOCK_DAYS)
+
         for med in medicines:
-            stock = _sellable_stock(session, med.id, today)
-            sold  = _units_sold_in_period(session, med.id, period_start, today)
+            stock = stock_map.get(med.id, 0)
+            sold  = sold_map.get(med.id, 0.0)
             ads   = sold / DEFAULT_ANALYSIS_DAYS if DEFAULT_ANALYSIS_DAYS > 0 else 0
-            rp    = round(ads * DEFAULT_LEAD_TIME_DAYS +
-                          ads * DEFAULT_SAFETY_STOCK_DAYS)
+            rp    = round(ads * DEFAULT_LEAD_TIME_DAYS + ads * DEFAULT_SAFETY_STOCK_DAYS)
             if stock <= rp:
                 needs_reorder += 1
+
+            # Dead stock check
+            if stock > 0:
+                last_sale = last_sale_map.get(med.id)
+                if last_sale is None or last_sale < threshold:
+                    dead += 1
 
         # High expiry risk batches
         high_risk_batches = (
@@ -672,17 +741,6 @@ def get_stock_intelligence_summary() -> dict:
             .scalar()
         )
         potential_waste = float(waste_q or 0)
-
-        # Dead stock count
-        dead = 0
-        threshold = today - timedelta(days=DEFAULT_DEAD_STOCK_DAYS)
-        for med in medicines:
-            stock = _sellable_stock(session, med.id, today)
-            if stock == 0:
-                continue
-            last_sale = _last_sale_date(session, med.id)
-            if last_sale is None or last_sale < threshold:
-                dead += 1
 
         # Turnover
         cogs    = _cogs_for_period(session, period_start, today)

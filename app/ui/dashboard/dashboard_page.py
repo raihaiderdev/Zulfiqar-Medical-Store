@@ -124,15 +124,18 @@ class DashboardPage(QWidget):
         self.content_layout.addWidget(self.sales_table)
 
         self._cards: dict[str, _KpiCard] = {}
+        self._last_refresh_time: float = 0.0  # epoch seconds; 0 = never refreshed
 
         self.refresh()
 
     def showEvent(self, event) -> None:
-        """Auto-refresh whenever the dashboard becomes visible — ensures
-        the expired count and badge always reflect the latest DB state
-        without requiring the user to click Refresh manually."""
+        """Auto-refresh when the dashboard becomes visible, but only if the
+        data is stale (older than 60 seconds) to avoid an expensive reload
+        on every sidebar click."""
         super().showEvent(event)
-        self.refresh()
+        import time
+        if time.monotonic() - self._last_refresh_time > 60:
+            self.refresh()
 
     def refresh(self) -> None:
         try:
@@ -219,6 +222,9 @@ class DashboardPage(QWidget):
             self._expiry_badge.setVisible(True)
         else:
             self._expiry_badge.setVisible(False)
+
+        import time
+        self._last_refresh_time = time.monotonic()
 
     def _show_expiry_alert(self) -> None:
         ExpiryAlertManager.show_alert_forced(self)

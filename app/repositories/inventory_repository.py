@@ -41,14 +41,14 @@ class MedicineRepository(BaseRepository[Medicine]):
         return self.session.query(Medicine).filter(Medicine.barcode == barcode).one_or_none()
 
     def search(self, term: str, active_only: bool = True, limit: int = 10000) -> list[Medicine]:
-        # Eager-load the full relationship tree needed after the session closes:
-        #   batches → shelf → rack → wardrobe  (for location display)
-        #   batches → supplier                 (for supplier name display)
-        # Without this, accessing b.shelf or b.supplier on a detached instance
-        # raises DetachedInstanceError.
+        # Only load the relationships needed for the use case.
+        # For the full search (Inventory page, dropdowns) we load batches with
+        # shelf/rack/wardrobe.  We do NOT load supplier on every search — it is
+        # only needed in the detail panel, which calls get_medicine_detail() separately.
         query = self.session.query(Medicine).options(
-            selectinload(Medicine.batches).selectinload(MedicineBatch.shelf).selectinload(Shelf.rack).selectinload(Rack.wardrobe),
-            selectinload(Medicine.batches).selectinload(MedicineBatch.supplier),
+            selectinload(Medicine.batches).selectinload(MedicineBatch.shelf)
+                .selectinload(Shelf.rack)
+                .selectinload(Rack.wardrobe),
         )
         if active_only:
             query = query.filter(Medicine.is_active.is_(True))

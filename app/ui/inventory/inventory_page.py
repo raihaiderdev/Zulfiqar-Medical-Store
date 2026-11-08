@@ -222,48 +222,67 @@ class InventoryPage(QWidget):
             self.refresh()
 
     def refresh(self) -> None:
-        """Reload all batch data from services and rebuild the flat row cache."""
+        """Reload all batch data from the DB using a single efficient query."""
         try:
-            medicines = medicine_service.search_medicines("")
-        except ApplicationError as exc:
+            from app.database.session import session_scope
+            from sqlalchemy.orm import selectinload
+            from app.models import Medicine, MedicineBatch
+            from app.models.location import Shelf, Rack, Wardrobe
+            from app.security.session_context import current_session
+            if not current_session.is_authenticated:
+                return
+
+            with session_scope() as session:
+                medicines = (
+                    session.query(Medicine)
+                    .options(
+                        selectinload(Medicine.batches)
+                        .selectinload(MedicineBatch.shelf)
+                        .selectinload(Shelf.rack)
+                        .selectinload(Rack.wardrobe),
+                    )
+                    .filter(Medicine.is_active.is_(True))
+                    .order_by(Medicine.name)
+                    .all()
+                )
+
+                today = date.today()
+                rows: list[dict] = []
+
+                for med in medicines:
+                    for b in med.batches:
+                        if not b.is_active:
+                            continue
+                        wardrobe = rack = shelf = supplier = ""
+                        if b.shelf:
+                            try:
+                                shelf    = b.shelf.code
+                                rack     = b.shelf.rack.code if b.shelf.rack else ""
+                                wardrobe = b.shelf.rack.wardrobe.code if (b.shelf.rack and b.shelf.rack.wardrobe) else ""
+                            except Exception:
+                                pass
+
+                        status = _batch_status(b.quantity, b.expiry_date, med.min_stock_level, today)
+                        rows.append({
+                            "medicine":   med.name,
+                            "formula":    med.generic_formula or "",
+                            "batch":      b.batch_number,
+                            "qty":        b.quantity,
+                            "unit":       med.unit or "",
+                            "buy_price":  float(b.purchase_price),
+                            "sell_price": float(b.selling_price),
+                            "expiry":     b.expiry_date.isoformat(),
+                            "wardrobe":   wardrobe,
+                            "rack":       rack,
+                            "shelf":      shelf,
+                            "supplier":   supplier,
+                            "status":     status,
+                        })
+
+        except Exception as exc:
+            from PySide6.QtWidgets import QMessageBox
             QMessageBox.warning(self, "Cannot load inventory", str(exc))
             return
-
-        today = date.today()
-        rows: list[dict] = []
-
-        for med in medicines:
-            for b in med.batches:
-                if not b.is_active:
-                    continue
-                # Location
-                wardrobe = rack = shelf = ""
-                if b.shelf:
-                    try:
-                        shelf = b.shelf.code
-                        rack = b.shelf.rack.code
-                        wardrobe = b.shelf.rack.wardrobe.code
-                    except Exception:
-                        pass
-
-                supplier = b.supplier.name if b.supplier else ""
-                status = _batch_status(b.quantity, b.expiry_date, med.min_stock_level, today)
-
-                rows.append({
-                    "medicine": med.name,
-                    "formula": med.generic_formula or "",
-                    "batch": b.batch_number,
-                    "qty": b.quantity,
-                    "unit": med.unit or "",
-                    "buy_price": float(b.purchase_price),
-                    "sell_price": float(b.selling_price),
-                    "expiry": b.expiry_date.isoformat(),
-                    "wardrobe": wardrobe,
-                    "rack": rack,
-                    "shelf": shelf,
-                    "supplier": supplier,
-                    "status": status,
-                })
 
         self._all_rows = rows
         self._apply_filter()
@@ -301,6 +320,7 @@ class InventoryPage(QWidget):
         self._populate_table(visible)
 
     def _populate_table(self, rows: list[dict]) -> None:
+        self.inv_table.setUpdatesEnabled(False)
         self.inv_table.setRowCount(0)
         cur = settings.currency
 
@@ -337,5 +357,5 @@ class InventoryPage(QWidget):
             status_item.setForeground(_STATUS_FG.get(status, Qt.GlobalColor.black))
             self.inv_table.setItem(row, 12, status_item)
 
-        self.inv_table.resizeColumnsToContents()
+        self.inv_table.setUpdatesEnabled(True)
         self.row_count_label.setText(f"{len(rows)} item(s) shown")
