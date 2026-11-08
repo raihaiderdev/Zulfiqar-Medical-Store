@@ -12,6 +12,7 @@ from PySide6.QtWidgets import (
     QFrame,
     QGridLayout,
     QHBoxLayout,
+    QHeaderView,
     QLabel,
     QMessageBox,
     QPushButton,
@@ -123,8 +124,116 @@ class DashboardPage(QWidget):
         self.sales_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self.content_layout.addWidget(self.sales_table)
 
+        # ── Today's Sales Summary strip ────────────────────────────────────
+        today_header = QLabel("📊  Today's Sales Summary")
+        today_header.setStyleSheet("font-size: 13px; font-weight: 700; margin-top: 8px;")
+        self.content_layout.addWidget(today_header)
+
+        self._today_frame = QFrame()
+        self._today_frame.setStyleSheet(
+            "QFrame { background: #eafaf1; border-radius: 8px; "
+            "border: 1px solid #a9dfbf; padding: 6px; }"
+        )
+        today_layout = QHBoxLayout(self._today_frame)
+        today_layout.setContentsMargins(16, 10, 16, 10)
+        today_layout.setSpacing(40)
+
+        def _summary_label(title: str, value: str = "—", colour: str = "#1e8449") -> QVBoxLayout:
+            v = QVBoxLayout()
+            v.setSpacing(2)
+            val_lbl = QLabel(value)
+            val_lbl.setStyleSheet(f"font-size: 18px; font-weight: 700; color: {colour};")
+            ttl_lbl = QLabel(title)
+            ttl_lbl.setStyleSheet("font-size: 11px; color: #666;")
+            v.addWidget(val_lbl)
+            v.addWidget(ttl_lbl)
+            return v, val_lbl   # return layout + the mutable label
+
+        lay_sales, self._today_sales_lbl     = _summary_label("Total Sales (Net)",    colour="#1e8449")
+        lay_disc,  self._today_disc_lbl      = _summary_label("Total Discount",       colour="#e65100")
+        lay_cost,  self._today_cogs_lbl      = _summary_label("Cost of Goods (COGS)", colour="#c0392b")
+        lay_profit,self._today_profit_lbl    = _summary_label("Gross Profit",         colour="#154c89")
+        lay_orders,self._today_orders_lbl    = _summary_label("No. of Orders",        colour="#555")
+        lay_fees,  self._today_fees_lbl      = _summary_label("Doctor Fees",          colour="#7d6608")
+
+        for lay in (lay_sales, lay_disc, lay_cost, lay_profit, lay_orders, lay_fees):
+            today_layout.addLayout(lay)
+        today_layout.addStretch()
+        self.content_layout.addWidget(self._today_frame)
+
+        # ── Last Completed Order panel ────────────────────────────────────
+        last_order_header = QLabel("🧾  Last Completed Order")
+        last_order_header.setStyleSheet("font-size: 13px; font-weight: 700; margin-top: 8px;")
+        self.content_layout.addWidget(last_order_header)
+
+        self._last_order_frame = QFrame()
+        self._last_order_frame.setStyleSheet(
+            "QFrame { background: #f9fafb; border-radius: 8px; "
+            "border: 1px solid #dee2e6; padding: 6px; }"
+        )
+        last_order_outer = QVBoxLayout(self._last_order_frame)
+        last_order_outer.setContentsMargins(12, 8, 12, 8)
+        last_order_outer.setSpacing(6)
+
+        # Invoice header row
+        self._order_header_lbl = QLabel("No sale recorded yet today")
+        self._order_header_lbl.setStyleSheet(
+            "font-size: 13px; font-weight: 700; color: #154c89;"
+        )
+        last_order_outer.addWidget(self._order_header_lbl)
+
+        # Items table
+        self._order_table = QTableWidget(0, 5)
+        self._order_table.setHorizontalHeaderLabels([
+            "Medicine", "Qty", f"Unit Price ({settings.currency})",
+            f"Discount ({settings.currency})", f"Line Total ({settings.currency})"
+        ])
+        self._order_table.horizontalHeader().setSectionResizeMode(
+            0, QHeaderView.ResizeMode.Stretch
+        )
+        for c in [1, 2, 3, 4]:
+            self._order_table.horizontalHeader().setSectionResizeMode(
+                c, QHeaderView.ResizeMode.ResizeToContents
+            )
+        self._order_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self._order_table.setAlternatingRowColors(True)
+        self._order_table.setMaximumHeight(160)
+        last_order_outer.addWidget(self._order_table)
+
+        # Totals row
+        totals_row = QHBoxLayout()
+        totals_row.setSpacing(30)
+
+        def _order_kpi(title: str, colour: str = "#333"):
+            v = QVBoxLayout(); v.setSpacing(1)
+            val = QLabel("—"); val.setStyleSheet(f"font-weight:700;font-size:14px;color:{colour};")
+            lbl = QLabel(title); lbl.setStyleSheet("font-size:11px;color:#888;")
+            v.addWidget(val); v.addWidget(lbl)
+            return v, val
+
+        lay_ot,   self._order_total_lbl    = _order_kpi(f"Total ({settings.currency})", "#154c89")
+        lay_od,   self._order_disc_lbl     = _order_kpi("Discount",                     "#e65100")
+        lay_ofee, self._order_fee_lbl      = _order_kpi("Doctor Fee",                   "#7d6608")
+        lay_op,   self._order_profit_lbl   = _order_kpi("Profit",                       "#1e8449")
+        lay_oc,   self._order_change_lbl   = _order_kpi("Change Due",                   "#555")
+
+        for lay in (lay_ot, lay_od, lay_ofee, lay_op, lay_oc):
+            totals_row.addLayout(lay)
+        totals_row.addStretch()
+        last_order_outer.addLayout(totals_row)
+
+        self.content_layout.addWidget(self._last_order_frame)
+        self.content_layout.addStretch()
+
         self._cards: dict[str, _KpiCard] = {}
         self._last_refresh_time: float = 0.0  # epoch seconds; 0 = never refreshed
+
+        # Connect to the sale event bus so the last-order panel updates live
+        try:
+            from app.ui.common.sale_event_bus import sale_bus
+            sale_bus.sale_completed.connect(self._on_sale_completed)
+        except Exception:
+            pass
 
         self.refresh()
 
@@ -225,6 +334,151 @@ class DashboardPage(QWidget):
 
         import time
         self._last_refresh_time = time.monotonic()
+
+        # Update today's summary strip using the already-loaded KPI data
+        self._update_today_summary(kpis["sales"].get("today", {}))
+
+    # ── Today's Summary + Last Order ─────────────────────────────────────
+
+    def _update_today_summary(self, today_kpi: dict) -> None:
+        """Refresh the Today's Sales strip from KPI data (no extra DB call)."""
+        cur = settings.currency
+        sales   = today_kpi.get("sales", 0.0)
+        disc    = today_kpi.get("discount", 0.0)
+        profit  = today_kpi.get("profit", 0.0)
+        # COGS = sales - profit  (from the aggregate query)
+        cogs    = round(sales - profit, 2)
+        fees    = today_kpi.get("doctor_fees", 0.0)
+
+        # Order count — lightweight query
+        try:
+            from datetime import date
+            from app.database.session import session_scope
+            from app.models import Sale
+            from app.models.enums import SaleStatus
+            from sqlalchemy import func
+            with session_scope() as session:
+                orders_today = int(
+                    session.query(func.count(Sale.id))
+                    .filter(Sale.sale_date == date.today(), Sale.status == SaleStatus.COMPLETED)
+                    .scalar() or 0
+                )
+        except Exception:
+            orders_today = 0
+
+        self._today_sales_lbl.setText(f"{cur} {sales:,.2f}")
+        self._today_disc_lbl.setText(f"- {cur} {disc:,.2f}")
+        self._today_cogs_lbl.setText(f"{cur} {cogs:,.2f}")
+        self._today_profit_lbl.setText(f"{cur} {profit:,.2f}")
+        self._today_orders_lbl.setText(str(orders_today))
+        self._today_fees_lbl.setText(f"{cur} {fees:,.2f}")
+
+    def _on_sale_completed(self, sale_id: int) -> None:
+        """Called immediately when a sale is completed from the POS page."""
+        self._update_last_order(sale_id)
+        # Also refresh today's summary strip (lightweight)
+        try:
+            from app.services.dashboard_service import _fast_sales_kpi
+            from datetime import date
+            from app.database.session import session_scope
+            with session_scope() as session:
+                today = date.today()
+                today_kpi = _fast_sales_kpi(session, today, today)
+            self._update_today_summary(today_kpi)
+        except Exception:
+            pass
+
+    def _update_last_order(self, sale_id: int) -> None:
+        """Load and display the detail of the most recently completed sale."""
+        try:
+            from app.services.sales_service import get_sale_detail
+            detail = get_sale_detail(sale_id)
+        except Exception:
+            return
+
+        cur = settings.currency
+        inv = detail.get("invoice_number", "")
+        sale_date = detail.get("date", "")
+        total     = float(detail.get("total", 0))
+        disc      = float(detail.get("discount_total", 0))
+        paid      = float(detail.get("amount_paid", 0))
+        change    = float(detail.get("change_due", 0))
+        items     = detail.get("items", [])
+
+        # Compute profit from line items
+        profit = sum(
+            float(i.get("line_profit", 0)) for i in items
+        )
+
+        # Doctor fee for this sale (linked by invoice number)
+        doc_fee = 0.0
+        try:
+            from app.services.doctor_fee_service import list_doctor_fees
+            fees = list_doctor_fees()
+            for f in fees:
+                if f.get("sale_reference") == inv and f.get("status") == "ACTIVE":
+                    doc_fee += float(f.get("amount", 0))
+        except Exception:
+            pass
+
+        # Update header
+        self._order_header_lbl.setText(
+            f"📋  Invoice: {inv}   |   Date: {sale_date}   |   "
+            f"Paid: {cur} {paid:.2f}   |   Change: {cur} {change:.2f}"
+        )
+
+        # Populate items table
+        self._order_table.setUpdatesEnabled(False)
+        self._order_table.setRowCount(0)
+        for item in items:
+            row = self._order_table.rowCount()
+            self._order_table.insertRow(row)
+            self._order_table.setItem(row, 0, QTableWidgetItem(item.get("medicine_name", "")))
+
+            qty_item = QTableWidgetItem(str(item.get("quantity", 0)))
+            qty_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignVCenter)
+            self._order_table.setItem(row, 1, qty_item)
+
+            price_item = QTableWidgetItem(f"{float(item.get('unit_price', 0)):.2f}")
+            price_item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+            self._order_table.setItem(row, 2, price_item)
+
+            disc_item = QTableWidgetItem(f"{float(item.get('line_discount', 0)):.2f}")
+            disc_item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+            self._order_table.setItem(row, 3, disc_item)
+
+            line_total = float(item.get("unit_price", 0)) * item.get("quantity", 0) - float(item.get("line_discount", 0))
+            lt_item = QTableWidgetItem(f"{line_total:.2f}")
+            lt_item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+            self._order_table.setItem(row, 4, lt_item)
+
+        # Add doctor fee as an extra row if present
+        if doc_fee > 0:
+            from PySide6.QtGui import QColor
+            row = self._order_table.rowCount()
+            self._order_table.insertRow(row)
+            fee_name = QTableWidgetItem("👨‍⚕️  Doctor Fee")
+            fee_name.setForeground(QColor("#7d6608"))
+            self._order_table.setItem(row, 0, fee_name)
+            self._order_table.setItem(row, 1, QTableWidgetItem("—"))
+            self._order_table.setItem(row, 2, QTableWidgetItem("—"))
+            self._order_table.setItem(row, 3, QTableWidgetItem("—"))
+            fee_amt = QTableWidgetItem(f"{doc_fee:.2f}")
+            fee_amt.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+            from PySide6.QtGui import QFont
+            f = QFont(); f.setBold(True)
+            fee_amt.setFont(f)
+            fee_amt.setForeground(QColor("#7d6608"))
+            self._order_table.setItem(row, 4, fee_amt)
+
+        self._order_table.setUpdatesEnabled(True)
+
+        # Update totals
+        self._order_total_lbl.setText(f"{cur} {total:.2f}")
+        self._order_disc_lbl.setText(f"- {cur} {disc:.2f}" if disc > 0 else "—")
+        self._order_fee_lbl.setText(f"{cur} {doc_fee:.2f}" if doc_fee > 0 else "—")
+        self._order_profit_lbl.setText(f"{cur} {profit:.2f}")
+        self._order_change_lbl.setText(f"{cur} {change:.2f}")
 
     def _show_expiry_alert(self) -> None:
         ExpiryAlertManager.show_alert_forced(self)

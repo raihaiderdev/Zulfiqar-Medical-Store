@@ -575,6 +575,13 @@ class SalesPOSPage(QWidget):
         )
         self._offer_print_invoice(result.sale_id)
 
+        # Notify the dashboard (and any other listener) that a sale was completed
+        try:
+            from app.ui.common.sale_event_bus import sale_bus
+            sale_bus.sale_completed.emit(result.sale_id)
+        except Exception:
+            pass  # bus is optional — never crash the POS
+
         # Reset everything
         self.cart.clear()
         self._amount_paid_user_edited = False
