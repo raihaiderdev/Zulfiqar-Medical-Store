@@ -562,6 +562,11 @@ class SalesPOSPage(QWidget):
             else:
                 QMessageBox.critical(self, "Sale failed", msg)
             return
+        except Exception as exc:
+            # Catch any unexpected error (session issues, import errors, etc.)
+            QMessageBox.critical(self, "Sale failed — unexpected error",
+                f"{type(exc).__name__}: {exc}\n\nPlease contact support.")
+            return
 
         cur = settings.currency
         fee_line = f"Doctor Fee: {cur} {doctor_fee_dict['amount']:.2f}\n" if doctor_fee_dict else ""
