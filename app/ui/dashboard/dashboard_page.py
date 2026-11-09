@@ -288,11 +288,11 @@ class DashboardPage(QWidget):
 
     def showEvent(self, event) -> None:
         """Auto-refresh when the dashboard becomes visible, but only if the
-        data is stale (older than 60 seconds) to avoid an expensive reload
-        on every sidebar click."""
+        data is stale (older than 10 seconds) to avoid an expensive reload
+        on every rapid sidebar click."""
         super().showEvent(event)
         import time
-        if time.monotonic() - self._last_refresh_time > 60:
+        if time.monotonic() - self._last_refresh_time > 10:
             self.refresh()
 
     def refresh(self) -> None:
@@ -423,19 +423,16 @@ class DashboardPage(QWidget):
         self._today_fees_lbl.setText(f"{cur} {fees:,.2f}")
 
     def _on_sale_completed(self, sale_id: int) -> None:
-        """Called immediately when a sale is completed from the POS page."""
+        """Called immediately when a sale is completed from the POS page.
+        Updates ALL dashboard sections so totals are current right away."""
+        # Always update the last order panel
         self._update_last_order(sale_id)
-        # Also refresh today's summary strip (lightweight)
-        try:
-            from app.services.dashboard_service import _fast_sales_kpi
-            from datetime import date
-            from app.database.session import session_scope
-            with session_scope() as session:
-                today = date.today()
-                today_kpi = _fast_sales_kpi(session, today, today)
-            self._update_today_summary(today_kpi)
-        except Exception:
-            pass
+
+        # Rerun the full refresh so Sales by Period table, KPI cards,
+        # and Today's Summary all reflect the new sale instantly.
+        # Reset the cooldown timer so showEvent also allows an immediate refresh.
+        self._last_refresh_time = 0.0
+        self.refresh()
 
     def _update_last_order(self, sale_id: int) -> None:
         """Load and display the detail of the most recently completed sale."""
